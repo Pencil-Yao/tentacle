@@ -5,6 +5,7 @@ array Uint32 [byte; 4];
 array Uint16 [byte; 2];
 array Bool [byte; 1];
 option PortOpt (Uint16);
+option AddressOpt (Bytes);
 
 union DiscoveryPayload {
     GetNodes,
@@ -19,6 +20,7 @@ table GetNodes {
     version: Uint32,
     count: Uint32,
     listen_port: PortOpt,
+    peer_key: AddressOpt,
 }
 
 table Nodes {
@@ -27,5 +29,6 @@ table Nodes {
 }
 
 table Node {
+    peer_key: AddressOpt,
     addresses: BytesVec,
 }

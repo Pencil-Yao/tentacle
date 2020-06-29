@@ -153,7 +153,7 @@ impl ServiceContext {
     /// Initiate a connection request to address
     #[inline]
     pub fn dial(&self, address: Multiaddr, target: TargetProtocol) -> Result<(), Error> {
-        self.inner.dial(address, target)
+        self.inner.dial(address, target, None)
     }
 
     /// Disconnect a connection

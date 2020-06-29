@@ -1,5 +1,6 @@
 use std::{collections::HashMap, io, sync::Arc, time::Duration};
 
+use tokio_rustls::rustls::{ClientConfig as TlsClientConfig, ServerConfig as TlsServerConfig};
 use tokio_util::codec::LengthDelimitedCodec;
 
 use crate::{
@@ -20,6 +21,8 @@ pub struct ServiceBuilder {
     key_pair: Option<SecioKeyPair>,
     forever: bool,
     config: ServiceConfig,
+    tls_server_config: Option<TlsServerConfig>,
+    tls_client_config: Option<TlsClientConfig>,
 }
 
 impl ServiceBuilder {
@@ -33,7 +36,15 @@ impl ServiceBuilder {
     where
         H: ServiceHandle + Unpin,
     {
-        Service::new(self.inner, handle, self.key_pair, self.forever, self.config)
+        Service::new(
+            self.inner,
+            handle,
+            self.key_pair,
+            self.forever,
+            self.config,
+            self.tls_server_config,
+            self.tls_client_config,
+        )
     }
 
     /// Insert a custom protocol
@@ -144,6 +155,18 @@ impl ServiceBuilder {
         self.inner.clear();
         self.config.event.clear();
     }
+
+    /// set rustls ServerConfig, default is NoClientAuth
+    pub fn tls_server_config(mut self, config: TlsServerConfig) -> Self {
+        self.tls_server_config = Some(config);
+        self
+    }
+
+    /// set rustls ClientConfig
+    pub fn tls_client_config(mut self, config: TlsClientConfig) -> Self {
+        self.tls_client_config = Some(config);
+        self
+    }
 }
 
 impl Default for ServiceBuilder {
@@ -153,6 +176,8 @@ impl Default for ServiceBuilder {
             key_pair: None,
             forever: false,
             config: ServiceConfig::default(),
+            tls_server_config: None,
+            tls_client_config: None,
         }
     }
 }

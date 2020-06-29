@@ -45,6 +45,10 @@ pub(crate) enum SessionEvent {
         listen_address: Multiaddr,
         incoming: MultiIncoming,
     },
+    ListenSeesion {
+        remote_address: Multiaddr,
+        stream: MultiStream,
+    },
     DialStart {
         remote_address: Multiaddr,
         stream: MultiStream,

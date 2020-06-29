@@ -13,6 +13,10 @@ use std::{
     time::Duration,
 };
 use tokio::prelude::{AsyncRead, AsyncWrite};
+use tokio_rustls::{
+    rustls::{ClientConfig, ServerConfig},
+    TlsAcceptor, TlsConnector,
+};
 
 use crate::{
     context::{ServiceContext, SessionContext, SessionController},
@@ -47,6 +51,7 @@ pub use crate::service::{
     control::ServiceControl,
     event::{ProtocolEvent, ServiceError, ServiceEvent},
 };
+use crate::transports::MultiStream;
 use bytes::Bytes;
 
 /// If the buffer capacity is greater than u8 max, shrink it
@@ -152,6 +157,10 @@ pub struct Service<T> {
         tokio::task::JoinHandle<()>,
     )>,
     session_wait_handle: SessionProtoHandles,
+
+    // rustls config
+    tls_client_config: Option<ClientConfig>,
+    tls_server_config: Option<ServerConfig>,
 }
 
 impl<T> Service<T>
@@ -165,6 +174,8 @@ where
         key_pair: Option<SecioKeyPair>,
         forever: bool,
         config: ServiceConfig,
+        tls_server_config: Option<ServerConfig>,
+        tls_client_config: Option<ClientConfig>,
     ) -> Self {
         let (session_event_sender, session_event_receiver) = mpsc::channel(RECEIVED_SIZE);
         let (service_task_sender, service_task_receiver) = mpsc::unbounded();
@@ -221,6 +232,8 @@ where
             shutdown,
             wait_handle: Vec::new(),
             session_wait_handle: HashMap::new(),
+            tls_server_config,
+            tls_client_config,
         }
     }
 
@@ -328,6 +341,7 @@ where
         &mut self,
         address: Multiaddr,
         target: TargetProtocol,
+        peer_key: Option<String>,
     ) -> Result<&mut Self, io::Error> {
         let dial_future = self
             .multi_transport
@@ -336,10 +350,18 @@ where
 
         match dial_future.await {
             Ok(value) => {
+                let mut socket: MultiStream = value.1;
+                if self.tls_client_config.is_some() {
+                    let connector =
+                        TlsConnector::from(Arc::new(self.tls_client_config.clone().unwrap()));
+                    socket = socket
+                        .connect(connector, peer_key.unwrap().as_str())
+                        .await?
+                }
                 self.session_event_sender
                     .send(SessionEvent::DialStart {
                         remote_address: value.0,
-                        stream: value.1,
+                        stream: socket,
                     })
                     .await
                     .map_err::<io::Error, _>(|_| io::ErrorKind::BrokenPipe.into())?;
@@ -356,7 +378,12 @@ where
 
     /// Use by inner
     #[inline(always)]
-    fn dial_inner(&mut self, address: Multiaddr, target: TargetProtocol) -> Result<(), io::Error> {
+    fn dial_inner(
+        &mut self,
+        address: Multiaddr,
+        target: TargetProtocol,
+        peer_key: Option<String>,
+    ) -> Result<(), io::Error> {
         self.dial_protocols.insert(address.clone(), target);
         let dial_future = self
             .multi_transport
@@ -364,14 +391,45 @@ where
             .map_err::<io::Error, _>(Into::into)?;
 
         let mut sender = self.session_event_sender.clone();
+        let tls_client_config = self.tls_client_config.clone();
         let task = async move {
             let result = dial_future.await;
 
             let event = match result {
-                Ok(value) => SessionEvent::DialStart {
-                    remote_address: value.0,
-                    stream: value.1,
-                },
+                Ok(value) => {
+                    let socket: MultiStream = value.1;
+                    if let Some(config) = tls_client_config {
+                        if let Some(key) = peer_key {
+                            let connector = TlsConnector::from(Arc::new(config));
+                            match socket.connect(connector, key.as_str()).await {
+                                Ok(socket) => SessionEvent::DialStart {
+                                    remote_address: value.0,
+                                    stream: socket,
+                                },
+                                Err(err) => SessionEvent::DialError {
+                                    address,
+                                    error: Error::IoError(io::Error::new(
+                                        io::ErrorKind::InvalidInput,
+                                        err,
+                                    )),
+                                },
+                            }
+                        } else {
+                            SessionEvent::DialError {
+                                address,
+                                error: Error::IoError(io::Error::new(
+                                    io::ErrorKind::InvalidInput,
+                                    "domain name must be provided in TLS mod",
+                                )),
+                            }
+                        }
+                    } else {
+                        SessionEvent::DialStart {
+                            remote_address: value.0,
+                            stream: socket,
+                        }
+                    }
+                }
                 Err(err) => match err {
                     TransportError::DNSResolverError((address, error)) => SessionEvent::DialError {
                         address,
@@ -1446,6 +1504,10 @@ where
                 remote_address,
                 stream,
             } => self.handshake(cx, stream, SessionType::Outbound, remote_address, None),
+            SessionEvent::ListenSeesion {
+                remote_address,
+                stream,
+            } => self.handshake(cx, stream, SessionType::Inbound, remote_address, None),
             SessionEvent::ProtocolHandleError { error, proto_id } => {
                 self.handle.handle_error(
                     &mut self.service_context,
@@ -1468,9 +1530,13 @@ where
             } => {
                 self.handle_message(cx, target, proto_id, priority, data);
             }
-            ServiceTask::Dial { address, target } => {
+            ServiceTask::Dial {
+                address,
+                target,
+                peer_key,
+            } => {
                 if !self.dial_protocols.contains_key(&address) {
-                    if let Err(e) = self.dial_inner(address.clone(), target) {
+                    if let Err(e) = self.dial_inner(address.clone(), target, peer_key) {
                         self.handle.handle_error(
                             &mut self.service_context,
                             ServiceError::DialerError {
@@ -1641,13 +1707,38 @@ where
         for (address, mut listen) in self.listens.split_off(0) {
             match Pin::new(&mut listen).as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok((remote_address, socket)))) => {
-                    self.handshake(
-                        cx,
-                        socket,
-                        SessionType::Inbound,
-                        remote_address,
-                        Some(address.clone()),
-                    );
+                    if self.tls_server_config.is_some() {
+                        let mut sender = self.session_event_sender.clone();
+                        let tls_server_config = self.tls_server_config.clone();
+                        let task = async move {
+                            let acceptor = TlsAcceptor::from(Arc::new(tls_server_config.unwrap()));
+                            // todo change unwrap
+                            let event = match socket.accept(acceptor).await {
+                                Ok(value) => SessionEvent::ListenSeesion {
+                                    remote_address,
+                                    stream: value,
+                                },
+                                Err(err) => SessionEvent::ListenError {
+                                    address: remote_address,
+                                    error: Error::IoError(err),
+                                },
+                            };
+                            if let Err(err) = sender.send(event).await {
+                                error!("handshake result send back error: {:?}", err);
+                            }
+                        };
+
+                        self.pending_tasks.push_back(Box::pin(task));
+                        self.state.increase();
+                    } else {
+                        self.handshake(
+                            cx,
+                            socket,
+                            SessionType::Inbound,
+                            remote_address,
+                            Some(address.clone()),
+                        );
+                    }
                     self.listens.push((address, listen));
                 }
                 Poll::Ready(None) => {

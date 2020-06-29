@@ -248,7 +248,7 @@ fn test_repeated_dial(secio: bool) {
         rt.block_on(async move {
             let listen_addr = addr_receiver.await.unwrap();
             service
-                .dial(listen_addr, TargetProtocol::All)
+                .dial(listen_addr, TargetProtocol::All, None)
                 .await
                 .unwrap();
             loop {
@@ -297,7 +297,7 @@ fn test_dial_with_no_notify(secio: bool) {
     for _ in 0..2 {
         for i in 1..6 {
             let addr = format!("/ip4/127.0.0.1/tcp/{}", i).parse().unwrap();
-            control.dial(addr, TargetProtocol::All).unwrap();
+            control.dial(addr, TargetProtocol::All, None).unwrap();
         }
         std::thread::sleep(Duration::from_secs(3));
     }

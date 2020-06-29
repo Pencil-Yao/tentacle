@@ -129,12 +129,14 @@ fn test_peer_id(fail: bool) {
             addr.push(MultiProtocol::P2P(Cow::Owned(
                 SecioKeyPair::secp256k1_generated().peer_id().into_bytes(),
             )));
-            control.dial(addr, TargetProtocol::All).unwrap();
+            control.dial(addr, TargetProtocol::All, None).unwrap();
         });
         assert_eq!(error_receiver.recv(), Ok(9));
     } else {
         listen_addr.push(MultiProtocol::P2P(Cow::Owned(key.peer_id().into_bytes())));
-        control.dial(listen_addr, TargetProtocol::All).unwrap();
+        control
+            .dial(listen_addr, TargetProtocol::All, None)
+            .unwrap();
         assert_eq!(error_receiver.recv(), Ok(0));
     }
 }

@@ -212,6 +212,7 @@ fn client() {
             .dial(
                 "/dns4/localhost/tcp/1337".parse().unwrap(),
                 TargetProtocol::All,
+                None,
             )
             .await
             .unwrap();

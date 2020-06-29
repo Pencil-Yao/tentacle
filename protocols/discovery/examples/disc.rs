@@ -17,8 +17,9 @@ use p2p::{
     ProtocolId, SessionId,
 };
 
+use cita_types::Address;
 use tentacle_discovery::{
-    AddressManager, Discovery, DiscoveryProtocol, MisbehaveResult, Misbehavior,
+    AddressManager, Discovery, DiscoveryProtocol, MisbehaveResult, Misbehavior, Node,
 };
 
 fn main() {
@@ -51,6 +52,7 @@ fn main() {
                 .dial(
                     "/ip4/127.0.0.1/tcp/1337".parse().unwrap(),
                     TargetProtocol::All,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -77,8 +79,8 @@ fn create_meta(id: ProtocolId, start: u16) -> ProtocolMeta {
     MetaBuilder::default()
         .id(id)
         .service_handle(move || {
-            let discovery =
-                Discovery::new(addr_mgr, Some(Duration::from_secs(7))).global_ip_only(false);
+            let discovery = Discovery::new(addr_mgr, Some(Duration::from_secs(7)), Address::zero())
+                .global_ip_only(false);
             ProtocolHandle::Callback(Box::new(DiscoveryProtocol::new(discovery)))
         })
         .build()
@@ -102,7 +104,7 @@ pub struct SimpleAddressManager {
 }
 
 impl AddressManager for SimpleAddressManager {
-    fn add_new_addr(&mut self, session_id: SessionId, addr: Multiaddr) {
+    fn add_new_addr(&mut self, session_id: SessionId, addr: Multiaddr, _pkey: Option<Address>) {
         log::info!("{:?}", addr);
         let (_, addrs) = self
             .peers
@@ -111,9 +113,9 @@ impl AddressManager for SimpleAddressManager {
         addrs.insert(addr);
     }
 
-    fn add_new_addrs(&mut self, session_id: SessionId, addrs: Vec<Multiaddr>) {
-        for addr in addrs.into_iter() {
-            self.add_new_addr(session_id, addr)
+    fn add_new_addrs(&mut self, session_id: SessionId, node: Node) {
+        for addr in node.addresses().into_iter() {
+            self.add_new_addr(session_id, addr, node.peer_key())
         }
     }
 
@@ -130,12 +132,13 @@ impl AddressManager for SimpleAddressManager {
         }
     }
 
-    fn get_random(&mut self, n: usize) -> Vec<Multiaddr> {
+    fn get_random(&mut self, n: usize) -> Vec<Node> {
         self.peers
             .values()
             .flat_map(|(_, addrs)| addrs)
             .take(n)
             .cloned()
+            .map(|addr| Node::new(None, vec![addr]))
             .collect()
     }
 }

@@ -154,7 +154,7 @@ fn test_session_handle_open(secio: bool) {
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async move {
             service_1
-                .dial(listen_addr, TargetProtocol::Single(0.into()))
+                .dial(listen_addr, TargetProtocol::Single(0.into()), None)
                 .await
                 .unwrap();
 
