@@ -256,12 +256,6 @@ impl SubstreamValue {
                             items[idx] = last_item;
                         }
                     }
-                    let items = items
-                        .into_iter()
-                        .map(|addr| Node {
-                            addresses: vec![addr],
-                        })
-                        .collect::<Vec<_>>();
                     let nodes = Nodes {
                         announce: false,
                         items,
