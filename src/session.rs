@@ -46,6 +46,10 @@ pub(crate) enum SessionEvent {
         listen_address: Multiaddr,
         incoming: MultiIncoming,
     },
+    ListenSeesion {
+        remote_address: Multiaddr,
+        stream: Box<dyn AsyncRW + Send + Unpin + 'static>,
+    },
     HandshakeSuccess {
         /// In order to be compatible with multiple underlying connection abstractions,
         /// the dyn trait needs to be used here

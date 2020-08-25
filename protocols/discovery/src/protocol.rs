@@ -19,6 +19,7 @@ use crate::protocol_generated::p2p::discovery::{
 };
 #[cfg(feature = "molc")]
 use crate::protocol_mol;
+use cita_types::Address;
 #[cfg(feature = "molc")]
 use molecule::prelude::{Builder, Entity, Reader};
 
@@ -72,6 +73,7 @@ pub enum DiscoveryMessage {
         version: u32,
         count: u32,
         listen_port: Option<u16>,
+        peer_key: Option<Address>,
     },
     Nodes(Nodes),
 }
@@ -81,10 +83,12 @@ impl DiscoveryMessage {
     pub fn encode(&self) -> Bytes {
         let mut fbb = flatbuffers::FlatBufferBuilder::new();
         let offset = match self {
+            // todo peer_key
             DiscoveryMessage::GetNodes {
                 version,
                 count,
                 listen_port,
+                peer_key,
             } => {
                 let mut get_nodes_builder = GetNodesBuilder::new(&mut fbb);
                 get_nodes_builder.add_version(*version);
@@ -141,10 +145,12 @@ impl DiscoveryMessage {
                 } else {
                     Some(fbs_get_nodes.listen_port())
                 };
+                // todo
                 Some(DiscoveryMessage::GetNodes {
                     version: fbs_get_nodes.version(),
                     count: fbs_get_nodes.count(),
                     listen_port,
+                    peer_key: Some(Address::zero()),
                 })
             }
             FbsDiscoveryPayload::Nodes => {
@@ -160,7 +166,10 @@ impl DiscoveryMessage {
                         let multiaddr = Multiaddr::try_from(address.seq()?.to_vec()).ok()?;
                         addresses.push(multiaddr);
                     }
-                    items.push(Node { addresses });
+                    items.push(Node {
+                        addresses,
+                        peer_key: Some(Address::zero()),
+                    });
                 }
                 Some(DiscoveryMessage::Nodes(Nodes {
                     announce: fbs_nodes.announce(),
@@ -178,6 +187,7 @@ impl DiscoveryMessage {
                 version,
                 count,
                 listen_port,
+                peer_key,
             } => {
                 let version_le = version.to_le_bytes();
                 let count_le = count.to_le_bytes();
@@ -202,10 +212,21 @@ impl DiscoveryMessage {
                             .build()
                     }))
                     .build();
+                let mut peer_key_builder = protocol_mol::AddressOpt::new_builder();
+                if let Some(key) = peer_key {
+                    peer_key_builder = peer_key_builder.set(Some(
+                        protocol_mol::Bytes::new_builder()
+                            .set(key.to_vec().into_iter().map(Into::into).collect())
+                            .build(),
+                    ));
+                } else {
+                    peer_key_builder = peer_key_builder.set(None);
+                }
                 let get_node = protocol_mol::GetNodes::new_builder()
                     .listen_port(listen_port)
                     .count(count)
                     .version(version)
+                    .peer_key(peer_key_builder.build())
                     .build();
                 protocol_mol::DiscoveryPayload::new_builder()
                     .set(get_node)
@@ -227,8 +248,19 @@ impl DiscoveryMessage {
                         )
                     }
                     let bytes_vec = protocol_mol::BytesVec::new_builder().set(vec_addrs).build();
+                    let mut peer_key_builder = protocol_mol::AddressOpt::new_builder();
+                    if let Some(key) = item.peer_key {
+                        peer_key_builder = peer_key_builder.set(Some(
+                            protocol_mol::Bytes::new_builder()
+                                .set(key.to_vec().into_iter().map(Into::into).collect())
+                                .build(),
+                        ));
+                    } else {
+                        peer_key_builder = peer_key_builder.set(None);
+                    }
                     let node = protocol_mol::Node::new_builder()
                         .addresses(bytes_vec)
+                        .peer_key(peer_key_builder.build())
                         .build();
                     item_vec.push(node)
                 }
@@ -263,10 +295,14 @@ impl DiscoveryMessage {
                     let le = port_reader.raw_data().as_ptr() as *const u16;
                     u16::from_le(unsafe { *le })
                 });
+                let peer_key = reader.peer_key().to_opt().map(|key_reader| {
+                    Address::try_from(key_reader.raw_data()).unwrap_or_else(|_| Address::zero())
+                });
                 Some(DiscoveryMessage::GetNodes {
                     version,
                     count,
                     listen_port,
+                    peer_key,
                 })
             }
             protocol_mol::DiscoveryPayloadUnionReader::Nodes(reader) => {
@@ -282,7 +318,13 @@ impl DiscoveryMessage {
                         addresses
                             .push(Multiaddr::try_from(address_reader.raw_data().to_vec()).ok()?)
                     }
-                    items.push(Node { addresses })
+                    let peer_key = node_reader.peer_key().to_opt().map(|key| {
+                        Address::try_from(key.raw_data()).unwrap_or_else(|_| Address::zero())
+                    });
+                    items.push(Node {
+                        addresses,
+                        peer_key,
+                    })
                 }
                 Some(DiscoveryMessage::Nodes(Nodes { announce, items }))
             }
@@ -298,7 +340,25 @@ pub struct Nodes {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Node {
+    pub(crate) peer_key: Option<Address>,
     pub(crate) addresses: Vec<Multiaddr>,
+}
+
+impl Node {
+    pub fn new(peer_key: Option<Address>, addresses: Vec<Multiaddr>) -> Node {
+        Node {
+            peer_key,
+            addresses,
+        }
+    }
+
+    pub fn peer_key(&self) -> Option<Address> {
+        self.peer_key
+    }
+
+    pub fn addresses(&self) -> Vec<Multiaddr> {
+        self.addresses.clone()
+    }
 }
 
 impl std::fmt::Display for DiscoveryMessage {
@@ -316,7 +376,7 @@ impl std::fmt::Display for DiscoveryMessage {
                     f,
                     "DiscoveryMessage::Nodes(announce:{}, items.length:{})",
                     announce,
-                    items.len()
+                    items.len(),
                 )?;
             }
         }

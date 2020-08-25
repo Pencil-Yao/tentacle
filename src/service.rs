@@ -15,6 +15,12 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::prelude::{AsyncRead, AsyncWrite};
+use tokio_rustls::{
+    rustls::{ClientConfig, ServerConfig},
+    TlsConnector,
+};
+
+
 
 use crate::{
     buffer::{Buffer, SendResult},
@@ -114,6 +120,10 @@ pub struct Service<T> {
         Option<futures::channel::oneshot::Sender<()>>,
         tokio::task::JoinHandle<()>,
     )>,
+
+    // rustls config
+    tls_client_config: Option<ClientConfig>,
+    tls_server_config: Option<ServerConfig>,
 }
 
 impl<T> Service<T>
@@ -127,6 +137,8 @@ where
         key_pair: Option<SecioKeyPair>,
         forever: bool,
         config: ServiceConfig,
+        tls_server_config: Option<ServerConfig>,
+        tls_client_config: Option<ClientConfig>,
     ) -> Self {
         let (session_event_sender, session_event_receiver) = mpsc::channel(RECEIVED_SIZE);
         let (task_sender, task_receiver) = priority_mpsc::unbounded();
@@ -171,6 +183,8 @@ where
             service_task_receiver: task_receiver,
             shutdown,
             wait_handle: Vec::new(),
+            tls_server_config,
+            tls_client_config,
         }
     }
 
@@ -238,6 +252,7 @@ where
             timeout: self.config.timeout,
             listen_addr: listen_address,
             future_task_sender: self.future_task_sender.clone_sender(),
+            tls_server_config: self.tls_server_config.clone(),
         };
         let mut sender = self.future_task_sender.clone_sender();
         tokio::spawn(async move {
@@ -274,11 +289,21 @@ where
     }
 
     /// Dial the given address, doesn't actually make a request, just generate a future
-    pub async fn dial(&mut self, address: Multiaddr, target: TargetProtocol) -> Result<&mut Self> {
+    pub async fn dial(
+        &mut self,
+        address: Multiaddr,
+        target: TargetProtocol,
+        peer_key: Option<String>,
+    ) -> Result<&mut Self> {
         let dial_future = self.multi_transport.dial(address.clone())?;
 
         match dial_future.await {
-            Ok((addr, incoming)) => {
+            Ok((addr, mut incoming)) => {
+                if self.tls_client_config.is_some() {
+                    let connector =
+                        TlsConnector::from(Arc::new(self.tls_client_config.clone().unwrap()));
+                    incoming = incoming.connect(connector, peer_key.unwrap().as_str()).await?;
+                }
                 self.handshake(incoming, SessionType::Outbound, addr, None);
                 self.dial_protocols.insert(address, target);
                 self.state.increase();
@@ -1092,6 +1117,12 @@ where
                     client.register(&listen_address)
                 }
                 self.spawn_listener(incoming, listen_address);
+            }
+            SessionEvent::ListenSeesion {
+                remote_address,
+                stream,
+            } => {
+                self.session_open(cx, stream, None, remote_address, SessionType::Inbound, None);
             }
             SessionEvent::ProtocolHandleError { error, proto_id } => {
                 self.handle.handle_error(

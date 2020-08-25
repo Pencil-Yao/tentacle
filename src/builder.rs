@@ -1,6 +1,7 @@
 use std::{collections::HashMap, io, sync::Arc, time::Duration};
 
 use tokio_util::codec::LengthDelimitedCodec;
+use tokio_rustls::rustls::{ClientConfig as TlsClientConfig, ServerConfig as TlsServerConfig};
 
 use crate::{
     protocol_select::SelectFn,
@@ -20,6 +21,8 @@ pub struct ServiceBuilder {
     key_pair: Option<SecioKeyPair>,
     forever: bool,
     config: ServiceConfig,
+    tls_server_config: Option<TlsServerConfig>,
+    tls_client_config: Option<TlsClientConfig>,
 }
 
 impl ServiceBuilder {
@@ -33,7 +36,7 @@ impl ServiceBuilder {
     where
         H: ServiceHandle + Unpin,
     {
-        Service::new(self.inner, handle, self.key_pair, self.forever, self.config)
+        Service::new(self.inner, handle, self.key_pair, self.forever, self.config, self.tls_server_config, self.tls_client_config,)
     }
 
     /// Insert a custom protocol
@@ -153,6 +156,8 @@ impl Default for ServiceBuilder {
             key_pair: None,
             forever: false,
             config: ServiceConfig::default(),
+            tls_server_config: None,
+            tls_client_config: None,
         }
     }
 }
