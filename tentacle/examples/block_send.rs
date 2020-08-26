@@ -109,7 +109,7 @@ fn main() {
             let (meta, _result) = create_meta(1.into());
             let mut service = create(false, meta, ());
             service
-                .dial(listen_addr, TargetProtocol::All)
+                .dial(listen_addr, TargetProtocol::All, None)
                 .await
                 .unwrap();
             loop {

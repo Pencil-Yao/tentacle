@@ -172,7 +172,7 @@ where
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async move {
             service
-                .dial(listen_addr, TargetProtocol::All)
+                .dial(listen_addr, TargetProtocol::All, None)
                 .await
                 .unwrap();
 

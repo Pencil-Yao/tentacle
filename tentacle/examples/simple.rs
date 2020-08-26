@@ -227,6 +227,7 @@ fn client() {
             .dial(
                 "/ip4/127.0.0.1/tcp/1337".parse().unwrap(),
                 TargetProtocol::All,
+                None,
             )
             .await
             .unwrap();

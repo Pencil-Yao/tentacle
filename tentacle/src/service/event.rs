@@ -212,6 +212,8 @@ pub(crate) enum ServiceTask {
         address: Multiaddr,
         /// Dial protocols
         target: TargetProtocol,
+
+        peer_key: Option<String>,
     },
     /// Listen task
     Listen {

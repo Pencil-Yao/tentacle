@@ -1,5 +1,7 @@
 use std::collections::hash_map::RandomState;
 
+use crate::Node;
+use cita_types::Address;
 use bloom_filters::{BloomFilter, DefaultBuildHashKernels, StableBloomFilter};
 use p2p::{multiaddr::Multiaddr, SessionId};
 
@@ -38,10 +40,10 @@ impl MisbehaveResult {
 // FIXME: Should be peer store?
 pub trait AddressManager {
     fn is_valid_addr(&self, addr: &Multiaddr) -> bool;
-    fn add_new_addr(&mut self, session_id: SessionId, addr: Multiaddr);
-    fn add_new_addrs(&mut self, session_id: SessionId, addrs: Vec<Multiaddr>);
+    fn add_new_addr(&mut self, session_id: SessionId, addr: Multiaddr, peer_key: Option<Address>);
+    fn add_new_addrs(&mut self, session_id: SessionId, node: Node);
     fn misbehave(&mut self, session_id: SessionId, kind: Misbehavior) -> MisbehaveResult;
-    fn get_random(&mut self, n: usize) -> Vec<Multiaddr>;
+    fn get_random(&mut self, n: usize) -> Vec<Node>;
 }
 
 // bitcoin: bloom.h, bloom.cpp => CRollingBloomFilter

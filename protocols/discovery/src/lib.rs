@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use cita_types::Address;
 use log::{debug, trace, warn};
 use p2p::{
     bytes::BytesMut,

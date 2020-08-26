@@ -82,7 +82,7 @@ fn test_disconnect(secio: bool) {
         rt.block_on(async move {
             let listen_addr = addr_receiver.await.unwrap();
             service
-                .dial(listen_addr, TargetProtocol::All)
+                .dial(listen_addr, TargetProtocol::All, None)
                 .await
                 .unwrap();
             loop {
