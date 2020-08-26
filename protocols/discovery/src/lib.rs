@@ -4,6 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use cita_types::Address;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     prelude::*,
@@ -166,6 +167,8 @@ pub struct Discovery<M> {
     check_interval: Option<Interval>,
 
     global_ip_only: bool,
+
+    peer_key: Address,
 }
 
 #[derive(Clone)]
@@ -175,7 +178,7 @@ pub struct DiscoveryHandle {
 
 impl<M: AddressManager + Unpin> Discovery<M> {
     /// Query cycle means checking and synchronizing the cycle time of the currently connected node, default is 24 hours
-    pub fn new(addr_mgr: M, query_cycle: Option<Duration>) -> Discovery<M> {
+    pub fn new(addr_mgr: M, query_cycle: Option<Duration>, peer_key: Address) -> Discovery<M> {
         let (substream_sender, substream_receiver) = channel(8);
         Discovery {
             check_interval: None,
@@ -188,6 +191,7 @@ impl<M: AddressManager + Unpin> Discovery<M> {
             dead_keys: HashSet::default(),
             dynamic_query_cycle: query_cycle,
             global_ip_only: true,
+            peer_key,
         }
     }
 
@@ -225,6 +229,7 @@ impl<M: AddressManager + Unpin> Discovery<M> {
                         substream,
                         self.max_known,
                         self.dynamic_query_cycle,
+                        Some(self.peer_key),
                     );
                     self.substreams.insert(key, value);
                 }
@@ -328,7 +333,8 @@ impl<M: AddressManager + Unpin> Discovery<M> {
                 let items = announce_multiaddrs
                     .into_iter()
                     .map(|addr| Node {
-                        addresses: vec![addr],
+                        addresses: vec![addr.clone()],
+                        peer_key: value.known_peer_addrs.remove(&addr),
                     })
                     .collect::<Vec<_>>();
                 let nodes = Nodes {
@@ -396,12 +402,9 @@ impl<M: AddressManager + Unpin> Stream for Discovery<M> {
 
         match self.pending_nodes.pop_front() {
             Some((_key, session_id, nodes)) => {
-                let addrs = nodes
-                    .items
-                    .into_iter()
-                    .flat_map(|node| node.addresses.into_iter())
-                    .collect::<Vec<_>>();
-                self.addr_mgr.add_new_addrs(session_id, addrs);
+                for node in nodes.items.into_iter() {
+                    self.addr_mgr.add_new_addrs(session_id, node);
+                }
                 Poll::Ready(Some(()))
             }
             None => Poll::Pending,

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use std::{
     io,
@@ -12,7 +12,7 @@ use log::{debug, trace, warn};
 use p2p::multiaddr::{Multiaddr, Protocol};
 use p2p::{
     context::ProtocolContextMutRef,
-    error::Error,
+    error::SendErrorKind,
     service::{ServiceControl, SessionType},
     utils::multiaddr_to_socketaddr,
     ProtocolId, SessionId,
@@ -21,7 +21,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 
 use crate::addr::{AddrKnown, AddressManager, Misbehavior, RawAddr};
-use crate::protocol::{DiscoveryCodec, DiscoveryMessage, Node, Nodes};
+use crate::protocol::{DiscoveryCodec, DiscoveryMessage, Nodes};
+use cita_types::Address;
 
 // FIXME: should be a more high level version number
 const VERSION: u32 = 0;
@@ -85,14 +86,9 @@ impl AsyncWrite for StreamHandle {
             .send_message_to(self.session_id, self.proto_id, BytesMut::from(buf).freeze())
             .map(|()| buf.len())
             .map_err(|e| {
-                if let Error::IoError(e) = e {
-                    if e.kind() == io::ErrorKind::WouldBlock {
-                        e
-                    } else {
-                        io::ErrorKind::BrokenPipe.into()
-                    }
-                } else {
-                    io::ErrorKind::BrokenPipe.into()
+                match e {
+                    SendErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe.into(),
+                    SendErrorKind::WouldBlock => io::ErrorKind::WouldBlock.into(),
                 }
             })
             .into()
@@ -116,6 +112,7 @@ pub struct SubstreamValue {
     pub(crate) announce: bool,
     pub(crate) last_announce: Option<Instant>,
     pub(crate) announce_multiaddrs: Vec<Multiaddr>,
+    pub(crate) known_peer_addrs: HashMap<Multiaddr, Address>,
     session_id: SessionId,
     announce_interval: Duration,
     received_get_nodes: bool,
@@ -129,17 +126,13 @@ impl SubstreamValue {
         substream: Substream,
         max_known: usize,
         query_cycle: Option<Duration>,
+        peer_key: Option<Address>,
     ) -> SubstreamValue {
         let session_id = substream.stream.session_id;
         let mut pending_messages = VecDeque::default();
         debug!("direction: {:?}", direction);
         let mut addr_known = AddrKnown::new(max_known);
         let remote_addr = if direction.is_outbound() {
-            pending_messages.push_back(DiscoveryMessage::GetNodes {
-                version: VERSION,
-                count: MAX_ADDR_TO_SEND as u32,
-                listen_port: substream.listen_port,
-            });
             addr_known.insert(RawAddr::from(
                 multiaddr_to_socketaddr(&substream.remote_addr).unwrap(),
             ));
@@ -149,11 +142,20 @@ impl SubstreamValue {
             RemoteAddress::Init(substream.remote_addr)
         };
 
+        // client and server all will request nodes
+        pending_messages.push_back(DiscoveryMessage::GetNodes {
+            version: VERSION,
+            count: MAX_ADDR_TO_SEND as u32,
+            listen_port: substream.listen_port,
+            peer_key,
+        });
+
         SubstreamValue {
             framed_stream: Framed::new(substream.stream, DiscoveryCodec::default()),
             last_announce: None,
             announce_interval: query_cycle
                 .unwrap_or_else(|| Duration::from_secs(ANNOUNCE_INTERVAL)),
+            known_peer_addrs: HashMap::default(),
             pending_messages,
             addr_known,
             remote_addr,
@@ -207,7 +209,11 @@ impl SubstreamValue {
         addr_mgr: &mut M,
     ) -> Result<Option<Nodes>, io::Error> {
         match message {
-            DiscoveryMessage::GetNodes { listen_port, .. } => {
+            DiscoveryMessage::GetNodes {
+                listen_port,
+                peer_key,
+                ..
+            } => {
                 if self.received_get_nodes {
                     // TODO: misbehavior
                     if addr_mgr
@@ -230,10 +236,14 @@ impl SubstreamValue {
                         self.remote_addr.update_port(port);
                         if let Some(raw_addr) = self.remote_raw_addr() {
                             self.addr_known.insert(raw_addr);
+                            if let Some(peer_key) = peer_key {
+                                trace!("received peer key: {:?}", peer_key);
+                                self.known_peer_addrs.insert(raw_addr.into(), peer_key);
+                            }
                         }
                         // add client listen address to manager
                         if let RemoteAddress::Listen(ref addr) = self.remote_addr {
-                            addr_mgr.add_new_addr(self.session_id, addr.clone());
+                            addr_mgr.add_new_addr(self.session_id, addr.clone(), peer_key);
                         }
                     }
 
@@ -243,12 +253,6 @@ impl SubstreamValue {
                             items[idx] = last_item;
                         }
                     }
-                    let items = items
-                        .into_iter()
-                        .map(|addr| Node {
-                            addresses: vec![addr],
-                        })
-                        .collect::<Vec<_>>();
                     let nodes = Nodes {
                         announce: false,
                         items,
@@ -348,6 +352,10 @@ impl SubstreamValue {
                             for addr in &node.addresses {
                                 trace!("received address: {}", addr);
                                 self.addr_known.insert(RawAddr::from(addr.clone()));
+                                if let Some(peer_key) = node.peer_key {
+                                    trace!("received peer key: {:?}", peer_key);
+                                    self.known_peer_addrs.insert(addr.clone(), peer_key);
+                                }
                             }
                         }
                         nodes_list.push(nodes);

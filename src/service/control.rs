@@ -96,8 +96,17 @@ impl ServiceControl {
 
     /// Initiate a connection request to address
     #[inline]
-    pub fn dial(&self, address: Multiaddr, target: TargetProtocol) -> Result {
-        self.quick_send(ServiceTask::Dial { address, target })
+    pub fn dial(
+        &self,
+        address: Multiaddr,
+        target: TargetProtocol,
+        peer_key: Option<String>,
+    ) -> Result {
+        self.quick_send(ServiceTask::Dial {
+            address,
+            target,
+            peer_key,
+        })
     }
 
     /// Disconnect a connection

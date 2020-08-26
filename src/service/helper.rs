@@ -17,6 +17,8 @@ use crate::{
     session::SessionEvent,
     transports::MultiIncoming,
 };
+use std::sync::Arc;
+use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Source {
@@ -159,6 +161,7 @@ pub struct Listener {
     pub(crate) timeout: Duration,
     pub(crate) listen_addr: Multiaddr,
     pub(crate) future_task_sender: mpsc::Sender<BoxedFutureTask>,
+    pub(crate) tls_server_config: Option<ServerConfig>,
 }
 
 impl Listener {
@@ -219,7 +222,36 @@ impl Stream for Listener {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.inner).as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok((remote_address, socket)))) => {
-                self.handshake(socket, remote_address);
+                if self.tls_server_config.is_some() {
+                    let mut event_sender = self.event_sender.clone();
+                    let tls_server_config = self.tls_server_config.clone();
+                    let task = async move {
+                        let acceptor = TlsAcceptor::from(Arc::new(tls_server_config.unwrap()));
+                        // todo modify unwrap
+                        let event = match socket.accept(acceptor).await {
+                            Ok(value) => SessionEvent::ListenSeesion {
+                                remote_address,
+                                stream: Box::new(value),
+                            },
+                            Err(err) => SessionEvent::ListenError {
+                                address: remote_address,
+                                error: err,
+                            },
+                        };
+                        if let Err(err) = event_sender.send(event).await {
+                            error!("listener handshake result send back error: {:?}", err);
+                        }
+                    };
+                    let mut future_task_sender = self.future_task_sender.clone();
+
+                    tokio::spawn(async move {
+                        if future_task_sender.send(Box::pin(task)).await.is_err() {
+                            trace!("handshake send err")
+                        }
+                    });
+                } else {
+                    self.handshake(socket, remote_address);
+                }
                 Poll::Ready(Some(()))
             }
             Poll::Ready(None) => {

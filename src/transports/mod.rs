@@ -16,6 +16,8 @@ use tokio::{
 };
 
 use self::tcp::{TcpDialFuture, TcpListenFuture, TcpTransport};
+use tokio_rustls::webpki::DNSNameRef;
+use tokio_rustls::{client, server, TlsAcceptor, TlsConnector};
 
 mod tcp;
 
@@ -96,14 +98,59 @@ impl Future for MultiDialFuture {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum MultiStream {
     Tcp(TcpStream),
+    TlsServer(server::TlsStream<TcpStream>),
+    TlsClient(client::TlsStream<TcpStream>),
+}
+
+impl MultiStream {
+    pub async fn accept(self, acceptor: TlsAcceptor) -> Result<MultiStream> {
+        if let MultiStream::Tcp(inner) = self {
+            Ok(MultiStream::TlsServer(
+                acceptor
+                    .accept(inner)
+                    .await
+                    .map_err(|e| TransportErrorKind::Io(e))?,
+            ))
+        } else {
+            Err(TransportErrorKind::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "stream is no TcpStream",
+            )))
+        }
+    }
+
+    pub async fn connect(self, connector: TlsConnector, domain: &str) -> Result<MultiStream> {
+        if let MultiStream::Tcp(inner) = self {
+            let domain = DNSNameRef::try_from_ascii_str(domain).map_err(|_| {
+                TransportErrorKind::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid dnsname",
+                ))
+            })?;
+            Ok(MultiStream::TlsClient(
+                connector
+                    .connect(domain, inner)
+                    .await
+                    .map_err(|e| TransportErrorKind::Io(e))?,
+            ))
+        } else {
+            Err(TransportErrorKind::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "stream is no TcpStream",
+            )))
+        }
+    }
 }
 
 impl fmt::Debug for MultiStream {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             MultiStream::Tcp(_) => write!(f, "Tcp stream"),
+            MultiStream::TlsServer(_) => write!(f, "Tls server stream"),
+            MultiStream::TlsClient(_) => write!(f, "Tls client stream"),
         }
     }
 }
@@ -116,6 +163,8 @@ impl AsyncRead for MultiStream {
     ) -> Poll<io::Result<usize>> {
         match self.get_mut() {
             MultiStream::Tcp(inner) => Pin::new(inner).poll_read(cx, buf),
+            MultiStream::TlsServer(inner) => Pin::new(inner).poll_read(cx, buf),
+            MultiStream::TlsClient(inner) => Pin::new(inner).poll_read(cx, buf),
         }
     }
 }
@@ -124,12 +173,16 @@ impl AsyncWrite for MultiStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
         match self.get_mut() {
             MultiStream::Tcp(inner) => Pin::new(inner).poll_write(cx, buf),
+            MultiStream::TlsServer(inner) => Pin::new(inner).poll_write(cx, buf),
+            MultiStream::TlsClient(inner) => Pin::new(inner).poll_write(cx, buf),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
         match self.get_mut() {
             MultiStream::Tcp(inner) => Pin::new(inner).poll_flush(cx),
+            MultiStream::TlsServer(inner) => Pin::new(inner).poll_flush(cx),
+            MultiStream::TlsClient(inner) => Pin::new(inner).poll_flush(cx),
         }
     }
 
@@ -137,6 +190,8 @@ impl AsyncWrite for MultiStream {
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
         match self.get_mut() {
             MultiStream::Tcp(inner) => Pin::new(inner).poll_shutdown(cx),
+            MultiStream::TlsServer(inner) => Pin::new(inner).poll_shutdown(cx),
+            MultiStream::TlsClient(inner) => Pin::new(inner).poll_shutdown(cx),
         }
     }
 }

@@ -7,6 +7,7 @@ use log::{debug, error, log_enabled, trace};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    io,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -15,6 +16,10 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::prelude::{AsyncRead, AsyncWrite};
+use tokio_rustls::{
+    rustls::{ClientConfig, ServerConfig},
+    TlsConnector,
+};
 
 use crate::{
     buffer::{Buffer, SendResult},
@@ -114,6 +119,10 @@ pub struct Service<T> {
         Option<futures::channel::oneshot::Sender<()>>,
         tokio::task::JoinHandle<()>,
     )>,
+
+    // rustls config
+    tls_client_config: Option<ClientConfig>,
+    tls_server_config: Option<ServerConfig>,
 }
 
 impl<T> Service<T>
@@ -127,6 +136,8 @@ where
         key_pair: Option<SecioKeyPair>,
         forever: bool,
         config: ServiceConfig,
+        tls_server_config: Option<ServerConfig>,
+        tls_client_config: Option<ClientConfig>,
     ) -> Self {
         let (session_event_sender, session_event_receiver) = mpsc::channel(RECEIVED_SIZE);
         let (task_sender, task_receiver) = priority_mpsc::unbounded();
@@ -171,6 +182,8 @@ where
             service_task_receiver: task_receiver,
             shutdown,
             wait_handle: Vec::new(),
+            tls_server_config,
+            tls_client_config,
         }
     }
 
@@ -238,6 +251,7 @@ where
             timeout: self.config.timeout,
             listen_addr: listen_address,
             future_task_sender: self.future_task_sender.clone_sender(),
+            tls_server_config: self.tls_server_config.clone(),
         };
         let mut sender = self.future_task_sender.clone_sender();
         tokio::spawn(async move {
@@ -274,11 +288,23 @@ where
     }
 
     /// Dial the given address, doesn't actually make a request, just generate a future
-    pub async fn dial(&mut self, address: Multiaddr, target: TargetProtocol) -> Result<&mut Self> {
+    pub async fn dial(
+        &mut self,
+        address: Multiaddr,
+        target: TargetProtocol,
+        peer_key: Option<String>,
+    ) -> Result<&mut Self> {
         let dial_future = self.multi_transport.dial(address.clone())?;
 
         match dial_future.await {
-            Ok((addr, incoming)) => {
+            Ok((addr, mut incoming)) => {
+                if self.tls_client_config.is_some() {
+                    let connector =
+                        TlsConnector::from(Arc::new(self.tls_client_config.clone().unwrap()));
+                    incoming = incoming
+                        .connect(connector, peer_key.unwrap().as_str())
+                        .await?;
+                }
                 self.handshake(incoming, SessionType::Outbound, addr, None);
                 self.dial_protocols.insert(address, target);
                 self.state.increase();
@@ -290,7 +316,12 @@ where
 
     /// Use by inner
     #[inline(always)]
-    fn dial_inner(&mut self, address: Multiaddr, target: TargetProtocol) -> Result<()> {
+    fn dial_inner(
+        &mut self,
+        address: Multiaddr,
+        target: TargetProtocol,
+        peer_key: Option<String>,
+    ) -> Result<()> {
         self.dial_protocols.insert(address.clone(), target);
         let dial_future = self.multi_transport.dial(address.clone())?;
 
@@ -299,22 +330,64 @@ where
         let max_frame_length = self.config.max_frame_length;
 
         let mut sender = self.session_event_sender.clone();
+        let tls_client_config = self.tls_client_config.clone();
         let task = async move {
             let result = dial_future.await;
-
             match result {
                 Ok((addr, incoming)) => {
-                    HandshakeContext {
-                        ty: SessionType::Outbound,
-                        remote_address: addr,
-                        listen_address: None,
-                        key_pair,
-                        event_sender: sender,
-                        max_frame_length,
-                        timeout,
+                    if let Some(config) = tls_client_config {
+                        if let Some(key) = peer_key {
+                            let connector = TlsConnector::from(Arc::new(config));
+                            match incoming.connect(connector, key.as_str()).await {
+                                Ok(incoming) => {
+                                    HandshakeContext {
+                                        ty: SessionType::Outbound,
+                                        remote_address: addr,
+                                        listen_address: None,
+                                        key_pair: None,
+                                        event_sender: sender,
+                                        max_frame_length,
+                                        timeout,
+                                    }
+                                    .handshake(incoming)
+                                    .await;
+                                }
+                                Err(error) => {
+                                    if let Err(err) = sender
+                                        .send(SessionEvent::DialError { address, error })
+                                        .await
+                                    {
+                                        error!("dial address result send back error: {:?}", err);
+                                    }
+                                }
+                            }
+                        } else {
+                            if let Err(err) = sender
+                                .send(SessionEvent::DialError {
+                                    address,
+                                    error: TransportErrorKind::Io(io::Error::new(
+                                        io::ErrorKind::InvalidInput,
+                                        "domain name must be provided in TLS mod",
+                                    )),
+                                })
+                                .await
+                            {
+                                error!("dial address result send back error: {:?}", err);
+                            }
+                        }
+                    } else {
+                        HandshakeContext {
+                            ty: SessionType::Outbound,
+                            remote_address: addr,
+                            listen_address: None,
+                            key_pair,
+                            event_sender: sender,
+                            max_frame_length,
+                            timeout,
+                        }
+                        .handshake(incoming)
+                        .await;
                     }
-                    .handshake(incoming)
-                    .await;
                 }
                 Err(error) => {
                     if let Err(err) = sender
@@ -1093,6 +1166,12 @@ where
                 }
                 self.spawn_listener(incoming, listen_address);
             }
+            SessionEvent::ListenSeesion {
+                remote_address,
+                stream,
+            } => {
+                self.session_open(cx, stream, None, remote_address, SessionType::Inbound, None);
+            }
             SessionEvent::ProtocolHandleError { error, proto_id } => {
                 self.handle.handle_error(
                     &mut self.service_context,
@@ -1115,9 +1194,13 @@ where
             } => {
                 self.handle_message(cx, target, proto_id, priority, data);
             }
-            ServiceTask::Dial { address, target } => {
+            ServiceTask::Dial {
+                address,
+                target,
+                peer_key,
+            } => {
                 if !self.dial_protocols.contains_key(&address) {
-                    if let Err(e) = self.dial_inner(address.clone(), target) {
+                    if let Err(e) = self.dial_inner(address.clone(), target, peer_key) {
                         self.handle.handle_error(
                             &mut self.service_context,
                             ServiceError::DialerError {

@@ -19,6 +19,7 @@ no-default-features = true
 [dependencies]
 yamux = { path = "yamux", version = "0.2.5", package = "tokio-yamux" }
 secio = { path = "secio", version = "0.4.0", package = "tentacle-secio" }
+tokio-rustls = { git = "https://github.com/Pencil-Yao/tls", branch = "smx" }
 
 futures = { version = "0.3.0" }
 tokio = { version = "0.2.0", features = ["time", "io-util", "tcp", "dns", "rt-threaded", "blocking"] }

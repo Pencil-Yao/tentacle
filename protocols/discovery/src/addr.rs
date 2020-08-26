@@ -2,9 +2,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
+use crate::Node;
+use cita_types::Address;
 use p2p::{
     multiaddr::Multiaddr,
-    utils::{is_reachable, multiaddr_to_socketaddr},
+    utils::{is_reachable, multiaddr_to_socketaddr, socketaddr_to_multiaddr},
     SessionId,
 };
 
@@ -52,10 +54,10 @@ impl MisbehaveResult {
 
 // FIXME: Should be peer store?
 pub trait AddressManager {
-    fn add_new_addr(&mut self, session_id: SessionId, addr: Multiaddr);
-    fn add_new_addrs(&mut self, session_id: SessionId, addrs: Vec<Multiaddr>);
+    fn add_new_addr(&mut self, session_id: SessionId, addr: Multiaddr, peer_key: Option<Address>);
+    fn add_new_addrs(&mut self, session_id: SessionId, node: Node);
     fn misbehave(&mut self, session_id: SessionId, kind: Misbehavior) -> MisbehaveResult;
-    fn get_random(&mut self, n: usize) -> Vec<Multiaddr>;
+    fn get_random(&mut self, n: usize) -> Vec<Node>;
 }
 
 // bitcoin: bloom.h, bloom.cpp => CRollingBloomFilter
@@ -129,6 +131,12 @@ impl From<Multiaddr> for RawAddr {
     fn from(addr: Multiaddr) -> RawAddr {
         // FIXME: maybe not socket addr
         RawAddr::from(multiaddr_to_socketaddr(&addr).unwrap())
+    }
+}
+
+impl Into<Multiaddr> for RawAddr {
+    fn into(self) -> Multiaddr {
+        socketaddr_to_multiaddr(self.socket_addr())
     }
 }
 
