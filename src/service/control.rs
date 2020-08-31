@@ -11,7 +11,7 @@ use crate::{
     error::SendErrorKind,
     multiaddr::Multiaddr,
     protocol_select::ProtocolInfo,
-    service::{ServiceTask, TargetProtocol, TargetSession, RECEIVED_BUFFER_SIZE},
+    service::{event::ServiceTask, TargetProtocol, TargetSession, RECEIVED_BUFFER_SIZE},
     ProtocolId, SessionId,
 };
 use bytes::Bytes;

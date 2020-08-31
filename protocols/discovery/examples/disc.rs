@@ -17,7 +17,6 @@ use p2p::{
     ProtocolId, SessionId,
 };
 
-use cita_types::Address;
 use tentacle_discovery::{
     AddressManager, Discovery, DiscoveryProtocol, MisbehaveResult, Misbehavior, Node,
 };
@@ -79,7 +78,7 @@ fn create_meta(id: ProtocolId, start: u16) -> ProtocolMeta {
     MetaBuilder::default()
         .id(id)
         .service_handle(move || {
-            let discovery = Discovery::new(addr_mgr, Some(Duration::from_secs(7)), Address::zero())
+            let discovery = Discovery::new(addr_mgr, Some(Duration::from_secs(7)), "".to_string())
                 .global_ip_only(false);
             ProtocolHandle::Callback(Box::new(DiscoveryProtocol::new(discovery)))
         })
@@ -104,7 +103,7 @@ pub struct SimpleAddressManager {
 }
 
 impl AddressManager for SimpleAddressManager {
-    fn add_new_addr(&mut self, session_id: SessionId, addr: Multiaddr, _pkey: Option<Address>) {
+    fn add_new_addr(&mut self, session_id: SessionId, addr: Multiaddr, _pkey: Option<String>) {
         log::info!("{:?}", addr);
         let (_, addrs) = self
             .peers

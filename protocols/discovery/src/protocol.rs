@@ -19,7 +19,6 @@ use crate::protocol_generated::p2p::discovery::{
 };
 #[cfg(feature = "molc")]
 use crate::protocol_mol;
-use cita_types::Address;
 #[cfg(feature = "molc")]
 use molecule::prelude::{Builder, Entity, Reader};
 
@@ -73,7 +72,7 @@ pub enum DiscoveryMessage {
         version: u32,
         count: u32,
         listen_port: Option<u16>,
-        peer_key: Option<Address>,
+        peer_key: Option<String>,
     },
     Nodes(Nodes),
 }
@@ -150,7 +149,7 @@ impl DiscoveryMessage {
                     version: fbs_get_nodes.version(),
                     count: fbs_get_nodes.count(),
                     listen_port,
-                    peer_key: Some(Address::zero()),
+                    peer_key: Some("".to_string()),
                 })
             }
             FbsDiscoveryPayload::Nodes => {
@@ -168,7 +167,7 @@ impl DiscoveryMessage {
                     }
                     items.push(Node {
                         addresses,
-                        peer_key: Some(Address::zero()),
+                        peer_key: Some("".to_string()),
                     });
                 }
                 Some(DiscoveryMessage::Nodes(Nodes {
@@ -216,7 +215,13 @@ impl DiscoveryMessage {
                 if let Some(key) = peer_key {
                     peer_key_builder = peer_key_builder.set(Some(
                         protocol_mol::Bytes::new_builder()
-                            .set(key.to_vec().into_iter().map(Into::into).collect())
+                            .set(
+                                key.as_bytes()
+                                    .to_vec()
+                                    .into_iter()
+                                    .map(Into::into)
+                                    .collect(),
+                            )
                             .build(),
                     ));
                 } else {
@@ -252,7 +257,13 @@ impl DiscoveryMessage {
                     if let Some(key) = item.peer_key {
                         peer_key_builder = peer_key_builder.set(Some(
                             protocol_mol::Bytes::new_builder()
-                                .set(key.to_vec().into_iter().map(Into::into).collect())
+                                .set(
+                                    key.as_bytes()
+                                        .to_vec()
+                                        .into_iter()
+                                        .map(Into::into)
+                                        .collect(),
+                                )
                                 .build(),
                         ));
                     } else {
@@ -296,7 +307,7 @@ impl DiscoveryMessage {
                     u16::from_le(unsafe { *le })
                 });
                 let peer_key = reader.peer_key().to_opt().map(|key_reader| {
-                    Address::try_from(key_reader.raw_data()).unwrap_or_else(|_| Address::zero())
+                    String::from_utf8(key_reader.raw_data().to_vec()).unwrap_or("".to_string())
                 });
                 Some(DiscoveryMessage::GetNodes {
                     version,
@@ -319,7 +330,7 @@ impl DiscoveryMessage {
                             .push(Multiaddr::try_from(address_reader.raw_data().to_vec()).ok()?)
                     }
                     let peer_key = node_reader.peer_key().to_opt().map(|key| {
-                        Address::try_from(key.raw_data()).unwrap_or_else(|_| Address::zero())
+                        String::from_utf8(key.raw_data().to_vec()).unwrap_or("".to_string())
                     });
                     items.push(Node {
                         addresses,
@@ -340,20 +351,20 @@ pub struct Nodes {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Node {
-    pub(crate) peer_key: Option<Address>,
+    pub(crate) peer_key: Option<String>,
     pub(crate) addresses: Vec<Multiaddr>,
 }
 
 impl Node {
-    pub fn new(peer_key: Option<Address>, addresses: Vec<Multiaddr>) -> Node {
+    pub fn new(peer_key: Option<String>, addresses: Vec<Multiaddr>) -> Node {
         Node {
             peer_key,
             addresses,
         }
     }
 
-    pub fn peer_key(&self) -> Option<Address> {
-        self.peer_key
+    pub fn peer_key(&self) -> Option<String> {
+        self.peer_key.clone()
     }
 
     pub fn addresses(&self) -> Vec<Multiaddr> {

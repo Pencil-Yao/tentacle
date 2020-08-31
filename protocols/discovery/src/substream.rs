@@ -22,7 +22,6 @@ use tokio_util::codec::Framed;
 
 use crate::addr::{AddrKnown, AddressManager, Misbehavior, RawAddr};
 use crate::protocol::{DiscoveryCodec, DiscoveryMessage, Nodes};
-use cita_types::Address;
 
 // FIXME: should be a more high level version number
 const VERSION: u32 = 0;
@@ -85,11 +84,9 @@ impl AsyncWrite for StreamHandle {
         self.sender
             .send_message_to(self.session_id, self.proto_id, BytesMut::from(buf).freeze())
             .map(|()| buf.len())
-            .map_err(|e| {
-                match e {
-                    SendErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe.into(),
-                    SendErrorKind::WouldBlock => io::ErrorKind::WouldBlock.into(),
-                }
+            .map_err(|e| match e {
+                SendErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe.into(),
+                SendErrorKind::WouldBlock => io::ErrorKind::WouldBlock.into(),
             })
             .into()
     }
@@ -112,7 +109,7 @@ pub struct SubstreamValue {
     pub(crate) announce: bool,
     pub(crate) last_announce: Option<Instant>,
     pub(crate) announce_multiaddrs: Vec<Multiaddr>,
-    pub(crate) known_peer_addrs: HashMap<Multiaddr, Address>,
+    pub(crate) known_peer_addrs: HashMap<Multiaddr, String>,
     session_id: SessionId,
     announce_interval: Duration,
     received_get_nodes: bool,
@@ -126,7 +123,7 @@ impl SubstreamValue {
         substream: Substream,
         max_known: usize,
         query_cycle: Option<Duration>,
-        peer_key: Option<Address>,
+        peer_key: Option<String>,
     ) -> SubstreamValue {
         let session_id = substream.stream.session_id;
         let mut pending_messages = VecDeque::default();
@@ -236,7 +233,7 @@ impl SubstreamValue {
                         self.remote_addr.update_port(port);
                         if let Some(raw_addr) = self.remote_raw_addr() {
                             self.addr_known.insert(raw_addr);
-                            if let Some(peer_key) = peer_key {
+                            if let Some(peer_key) = peer_key.clone() {
                                 trace!("received peer key: {:?}", peer_key);
                                 self.known_peer_addrs.insert(raw_addr.into(), peer_key);
                             }
@@ -352,7 +349,7 @@ impl SubstreamValue {
                             for addr in &node.addresses {
                                 trace!("received address: {}", addr);
                                 self.addr_known.insert(RawAddr::from(addr.clone()));
-                                if let Some(peer_key) = node.peer_key {
+                                if let Some(peer_key) = node.peer_key.clone() {
                                     trace!("received peer key: {:?}", peer_key);
                                     self.known_peer_addrs.insert(addr.clone(), peer_key);
                                 }

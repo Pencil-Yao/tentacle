@@ -4,7 +4,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use cita_types::Address;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     prelude::*,
@@ -168,7 +167,7 @@ pub struct Discovery<M> {
 
     global_ip_only: bool,
 
-    peer_key: Address,
+    peer_key: Option<String>,
 }
 
 #[derive(Clone)]
@@ -178,7 +177,11 @@ pub struct DiscoveryHandle {
 
 impl<M: AddressManager + Unpin> Discovery<M> {
     /// Query cycle means checking and synchronizing the cycle time of the currently connected node, default is 24 hours
-    pub fn new(addr_mgr: M, query_cycle: Option<Duration>, peer_key: Address) -> Discovery<M> {
+    pub fn new(
+        addr_mgr: M,
+        query_cycle: Option<Duration>,
+        peer_key: Option<String>,
+    ) -> Discovery<M> {
         let (substream_sender, substream_receiver) = channel(8);
         Discovery {
             check_interval: None,
@@ -229,7 +232,7 @@ impl<M: AddressManager + Unpin> Discovery<M> {
                         substream,
                         self.max_known,
                         self.dynamic_query_cycle,
-                        Some(self.peer_key),
+                        self.peer_key.clone(),
                     );
                     self.substreams.insert(key, value);
                 }
