@@ -13,6 +13,7 @@ use super::{
     protocol::{encode, DiscoveryMessage, Node, Nodes},
     MAX_ADDR_TO_SEND,
 };
+use std::collections::HashMap;
 
 // FIXME: should be a more high level version number
 
@@ -27,10 +28,11 @@ pub struct SessionState {
     pub(crate) announce_multiaddrs: Vec<Multiaddr>,
     pub(crate) received_get_nodes: bool,
     pub(crate) received_nodes: bool,
+    pub(crate) known_peer_addrs: HashMap<Multiaddr, String>,
 }
 
 impl SessionState {
-    pub(crate) fn new(context: ProtocolContextMutRef) -> SessionState {
+    pub(crate) fn new(context: ProtocolContextMutRef, peer_key: Option<String>,) -> SessionState {
         let mut addr_known = AddrKnown::default();
         let remote_addr = if context.session.ty.is_outbound() {
             let port = context
@@ -44,6 +46,7 @@ impl SessionState {
                 version: VERSION,
                 count: MAX_ADDR_TO_SEND as u32,
                 listen_port: port,
+                peer_key,
             });
 
             if context.send_message(msg).is_err() {
@@ -64,6 +67,7 @@ impl SessionState {
             announce_multiaddrs: Vec::new(),
             received_get_nodes: false,
             received_nodes: false,
+            known_peer_addrs: HashMap::new(),
         }
     }
 
@@ -85,12 +89,13 @@ impl SessionState {
     }
 
     pub(crate) fn send_messages(&mut self, cx: &mut ProtocolContext, id: SessionId) {
-        if !self.announce_multiaddrs.is_empty() {
-            let items = self
-                .announce_multiaddrs
-                .drain(..)
+        let announce_multiaddrs = self.announce_multiaddrs.split_off(0);
+        if !announce_multiaddrs.is_empty() {
+            let items = announce_multiaddrs
+                .into_iter()
                 .map(|addr| Node {
-                    addresses: vec![addr],
+                    addresses: vec![addr.clone()],
+                    peer_key: self.known_peer_addrs.remove(&addr),
                 })
                 .collect::<Vec<_>>();
             let nodes = Nodes {

@@ -15,7 +15,7 @@ all-features = false
 no-default-features = true
 
 [dependencies]
-p2p = { path = "../..", version = "0.3.0", package = "tentacle" }
+p2p = { path = "../../tentacle", version = "0.3.0", package = "tentacle" }
 bytes = "0.5.0"
 futures = { version = "0.3.0" }
 tokio = { version = "0.2.0", features = ["time", "io-util", "tcp", "dns", "stream"] }

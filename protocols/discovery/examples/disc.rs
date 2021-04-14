@@ -22,7 +22,7 @@ use tentacle_discovery::{AddressManager, DiscoveryProtocol, MisbehaveResult, Mis
 
 fn main() {
     env_logger::init();
-    let meta = create_meta(1.into(), 1400);
+    let meta = create_meta(1.into(), 1400, None);
     let mut service = ServiceBuilder::default()
         .insert_protocol(meta)
         .forever(true)
@@ -67,7 +67,7 @@ fn main() {
     }
 }
 
-fn create_meta(id: ProtocolId, start: u16) -> ProtocolMeta {
+fn create_meta(id: ProtocolId, start: u16, peer_key: Option<String>) -> ProtocolMeta {
     let addrs: HashSet<Multiaddr> = (start..start + 3333)
         .map(|port| format!("/ip4/127.0.0.1/tcp/{}", port).parse().unwrap())
         .collect();
@@ -81,6 +81,7 @@ fn create_meta(id: ProtocolId, start: u16) -> ProtocolMeta {
                 addr_mgr,
                 Some(Duration::from_secs(7)),
                 None,
+                peer_key,
             )))
         })
         .build()

@@ -3,7 +3,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cita_types::Address;
 use log::{debug, trace, warn};
 use p2p::{
     bytes::BytesMut,
@@ -51,6 +50,8 @@ pub struct DiscoveryProtocol<M> {
     addr_mgr: M,
 
     check_interval: Option<Duration>,
+
+    peer_key: Option<String>,
 }
 
 impl<M: AddressManager> DiscoveryProtocol<M> {
@@ -60,12 +61,14 @@ impl<M: AddressManager> DiscoveryProtocol<M> {
         addr_mgr: M,
         query_cycle: Option<Duration>,
         check_interval: Option<Duration>,
+        peer_key: Option<String>,
     ) -> DiscoveryProtocol<M> {
         DiscoveryProtocol {
             sessions: HashMap::default(),
             dynamic_query_cycle: query_cycle,
             check_interval,
             addr_mgr,
+            peer_key,
         }
     }
 }
@@ -89,7 +92,7 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
             session.id, session.address, session.ty
         );
 
-        self.sessions.insert(session.id, SessionState::new(context));
+        self.sessions.insert(session.id, SessionState::new(context, self.peer_key.clone()));
     }
 
     fn disconnected(&mut self, context: ProtocolContextMutRef) {
@@ -118,7 +121,10 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
             Some(item) => {
                 match item {
                     DiscoveryMessage::GetNodes {
-                        listen_port, count, ..
+                        listen_port,
+                        count,
+                        peer_key,
+                        ..
                     } => {
                         if let Some(state) = self.sessions.get_mut(&session.id) {
                             if state.received_get_nodes && check(Misbehavior::DuplicateGetNodes) {
@@ -135,9 +141,13 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
                             if let Some(port) = listen_port {
                                 state.remote_addr.update_port(port);
                                 state.addr_known.insert(state.remote_addr.to_inner());
+                                if let Some(peer_key) = peer_key.clone() {
+                                    trace!("received peer key: {:?}", peer_key);
+                                    state.known_peer_addrs.insert(state.remote_addr.to_inner().clone(), peer_key);
+                                }
                                 // add client listen address to manager
                                 if let RemoteAddress::Listen(ref addr) = state.remote_addr {
-                                    self.addr_mgr.add_new_addr(session.id, addr.clone());
+                                    self.addr_mgr.add_new_addr(session.id, addr.clone(), peer_key);
                                 }
                             }
 
@@ -149,14 +159,9 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
                                     .collect();
                             }
 
-                            state.addr_known.extend(items.iter());
-
-                            let items = items
-                                .into_iter()
-                                .map(|addr| Node {
-                                    addresses: vec![addr],
-                                })
-                                .collect::<Vec<_>>();
+                            for node in items.iter() {
+                                state.addr_known.extend(node.addresses().iter())
+                            }
 
                             let nodes = Nodes {
                                 announce: false,
@@ -185,8 +190,8 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
                             } else {
                                 let addrs = nodes
                                     .items
-                                    .into_iter()
-                                    .flat_map(|node| node.addresses.into_iter())
+                                    .iter()
+                                    .flat_map(|node| node.addresses().into_iter())
                                     .collect::<Vec<_>>();
 
                                 state.addr_known.extend(addrs.iter());
@@ -197,7 +202,9 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
                                 if !nodes.announce {
                                     state.received_nodes = true;
                                 }
-                                self.addr_mgr.add_new_addrs(session.id, addrs);
+                                for node in nodes.items.into_iter() {
+                                    self.addr_mgr.add_new_addrs(session.id, node);
+                                }
                             }
                         }
                     }

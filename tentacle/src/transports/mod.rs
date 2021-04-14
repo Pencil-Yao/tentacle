@@ -77,6 +77,8 @@ mod os {
     use tokio::prelude::{AsyncRead, AsyncWrite};
 
     use self::tcp::{TcpDialFuture, TcpListenFuture, TcpTransport};
+    use tokio_rustls::webpki::DNSNameRef;
+    use tokio_rustls::{client, server, TlsAcceptor, TlsConnector};
     #[cfg(feature = "ws")]
     use self::ws::{WebsocketListener, WsDialFuture, WsListenFuture, WsStream, WsTransport};
     #[cfg(feature = "ws")]
@@ -213,6 +215,48 @@ mod os {
         Tcp(TcpStream),
         #[cfg(feature = "ws")]
         Ws(Box<WsStream>),
+        TlsServer(server::TlsStream<TcpStream>),
+        TlsClient(client::TlsStream<TcpStream>),
+    }
+
+    impl MultiStream {
+        pub async fn accept(self, acceptor: TlsAcceptor) -> Result<MultiStream> {
+            if let MultiStream::Tcp(inner) = self {
+                Ok(MultiStream::TlsServer(
+                    acceptor
+                        .accept(inner)
+                        .await
+                        .map_err(|e| TransportErrorKind::Io(e))?,
+                ))
+            } else {
+                Err(TransportErrorKind::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "stream is no TcpStream",
+                )))
+            }
+        }
+
+        pub async fn connect(self, connector: TlsConnector, domain: &str) -> Result<MultiStream> {
+            if let MultiStream::Tcp(inner) = self {
+                let domain = DNSNameRef::try_from_ascii_str(domain).map_err(|_| {
+                    TransportErrorKind::Io(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid dnsname",
+                    ))
+                })?;
+                Ok(MultiStream::TlsClient(
+                    connector
+                        .connect(domain, inner)
+                        .await
+                        .map_err(|e| TransportErrorKind::Io(e))?,
+                ))
+            } else {
+                Err(TransportErrorKind::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "stream is no TcpStream",
+                )))
+            }
+        }
     }
 
     impl fmt::Debug for MultiStream {
@@ -221,6 +265,8 @@ mod os {
                 MultiStream::Tcp(_) => write!(f, "Tcp stream"),
                 #[cfg(feature = "ws")]
                 MultiStream::Ws(_) => write!(f, "Websocket stream"),
+                MultiStream::TlsServer(_) => write!(f, "Tls server stream"),
+                MultiStream::TlsClient(_) => write!(f, "Tls client stream"),
             }
         }
     }
@@ -235,6 +281,8 @@ mod os {
                 MultiStream::Tcp(inner) => Pin::new(inner).poll_read(cx, buf),
                 #[cfg(feature = "ws")]
                 MultiStream::Ws(inner) => Pin::new(inner).poll_read(cx, buf),
+                MultiStream::TlsServer(inner) => Pin::new(inner).poll_read(cx, buf),
+                MultiStream::TlsClient(inner) => Pin::new(inner).poll_read(cx, buf),
             }
         }
 
@@ -256,6 +304,8 @@ mod os {
                 MultiStream::Tcp(inner) => Pin::new(inner).poll_write(cx, buf),
                 #[cfg(feature = "ws")]
                 MultiStream::Ws(inner) => Pin::new(inner).poll_write(cx, buf),
+                MultiStream::TlsServer(inner) => Pin::new(inner).poll_write(cx, buf),
+                MultiStream::TlsClient(inner) => Pin::new(inner).poll_write(cx, buf),
             }
         }
 
@@ -264,6 +314,8 @@ mod os {
                 MultiStream::Tcp(inner) => Pin::new(inner).poll_flush(cx),
                 #[cfg(feature = "ws")]
                 MultiStream::Ws(inner) => Pin::new(inner).poll_flush(cx),
+                MultiStream::TlsServer(inner) => Pin::new(inner).poll_flush(cx),
+                MultiStream::TlsClient(inner) => Pin::new(inner).poll_flush(cx),
             }
         }
 
@@ -273,6 +325,8 @@ mod os {
                 MultiStream::Tcp(inner) => Pin::new(inner).poll_shutdown(cx),
                 #[cfg(feature = "ws")]
                 MultiStream::Ws(inner) => Pin::new(inner).poll_shutdown(cx),
+                MultiStream::TlsServer(inner) => Pin::new(inner).poll_shutdown(cx),
+                MultiStream::TlsClient(inner) => Pin::new(inner).poll_shutdown(cx),
             }
         }
     }
