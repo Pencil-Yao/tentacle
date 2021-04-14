@@ -13,7 +13,8 @@ use p2p::{
 use rand::seq::SliceRandom;
 
 pub use addr::{AddressManager, MisbehaveResult, Misbehavior};
-use protocol::{decode, encode, DiscoveryMessage, Node, Nodes};
+pub use protocol::Node;
+use protocol::{decode, encode, DiscoveryMessage, Nodes};
 use state::{RemoteAddress, SessionState};
 
 mod addr;
