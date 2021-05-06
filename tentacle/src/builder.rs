@@ -2,6 +2,8 @@ use std::{collections::HashMap, io, sync::Arc, time::Duration};
 
 use tokio_util::codec::LengthDelimitedCodec;
 
+#[cfg(feature = "tls")]
+use crate::service::config::TlsConfig;
 use crate::{
     protocol_select::SelectFn,
     secio::SecioKeyPair,
@@ -21,6 +23,8 @@ pub struct ServiceBuilder {
     key_pair: Option<SecioKeyPair>,
     forever: bool,
     config: ServiceConfig,
+    #[cfg(feature = "tls")]
+    tls_config: Option<TlsConfig>,
 }
 
 impl ServiceBuilder {
@@ -34,7 +38,15 @@ impl ServiceBuilder {
     where
         H: ServiceHandle + Unpin,
     {
-        Service::new(self.inner, handle, self.key_pair, self.forever, self.config)
+        Service::new(
+            self.inner,
+            handle,
+            self.key_pair,
+            self.forever,
+            self.config,
+            #[cfg(feature = "tls")]
+            self.tls_config,
+        )
     }
 
     /// Insert a custom protocol
@@ -159,6 +171,13 @@ impl ServiceBuilder {
     pub fn clear(&mut self) {
         self.inner.clear();
     }
+
+    /// set rustls ServerConfig, default is NoClientAuth
+    #[cfg(feature = "tls")]
+    pub fn tls_config(mut self, config: TlsConfig) -> Self {
+        self.tls_config = Some(config);
+        self
+    }
 }
 
 impl Default for ServiceBuilder {
@@ -168,6 +187,8 @@ impl Default for ServiceBuilder {
             key_pair: None,
             forever: false,
             config: ServiceConfig::default(),
+            #[cfg(feature = "tls")]
+            tls_config: None,
         }
     }
 }

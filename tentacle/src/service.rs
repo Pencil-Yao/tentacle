@@ -50,7 +50,9 @@ pub(crate) mod future_task;
 mod helper;
 
 pub use crate::service::{
-    config::{BlockingFlag, ProtocolHandle, ProtocolMeta, TargetProtocol, TargetSession},
+    config::{
+        BlockingFlag, ProtocolHandle, ProtocolMeta, TargetProtocol, TargetSession, TlsConfig,
+    },
     control::{ServiceAsyncControl, ServiceControl},
     event::{ServiceError, ServiceEvent},
     helper::SessionType,
@@ -129,6 +131,7 @@ where
         key_pair: Option<SecioKeyPair>,
         forever: bool,
         config: ServiceConfig,
+        #[cfg(feature = "tls")] tls_config: Option<TlsConfig>,
     ) -> Self {
         let (session_event_sender, session_event_receiver) = mpsc::channel(RECEIVED_SIZE);
         let (task_sender, task_receiver) = priority_mpsc::channel(RECEIVED_BUFFER_SIZE);
@@ -157,6 +160,8 @@ where
                 let transport = MultiTransport::new(config.timeout).tcp_bind(config.tcp_bind_addr);
                 #[cfg(feature = "ws")]
                 let transport = transport.ws_bind(config.ws_bind_addr);
+                #[cfg(feature = "tls")]
+                let transport = transport.tls_config(tls_config);
                 transport
             },
             future_task_sender: Buffer::new(future_task_sender),
@@ -218,7 +223,7 @@ where
     /// Return really listen multiaddr, but if use `/dns4/localhost/tcp/80`,
     /// it will return original value, and create a future task to DNS resolver later.
     pub async fn listen(&mut self, address: Multiaddr) -> Result<Multiaddr> {
-        let listen_future = self.multi_transport.listen(address.clone())?;
+        let listen_future = self.multi_transport.clone().listen(address.clone())?;
 
         #[cfg(target_arch = "wasm32")]
         unreachable!();
@@ -272,7 +277,7 @@ where
 
     /// Use by inner
     fn listen_inner(&mut self, address: Multiaddr) -> Result<()> {
-        let listen_future = self.multi_transport.listen(address.clone())?;
+        let listen_future = self.multi_transport.clone().listen(address.clone())?;
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -299,7 +304,7 @@ where
 
     /// Dial the given address, doesn't actually make a request, just generate a future
     pub async fn dial(&mut self, address: Multiaddr, target: TargetProtocol) -> Result<&mut Self> {
-        let dial_future = self.multi_transport.dial(address.clone())?;
+        let dial_future = self.multi_transport.clone().dial(address.clone())?;
 
         match dial_future.await {
             Ok((addr, incoming)) => {
@@ -316,7 +321,7 @@ where
     #[inline(always)]
     fn dial_inner(&mut self, address: Multiaddr, target: TargetProtocol) -> Result<()> {
         self.dial_protocols.insert(address.clone(), target);
-        let dial_future = self.multi_transport.dial(address.clone())?;
+        let dial_future = self.multi_transport.clone().dial(address.clone())?;
 
         let key_pair = self.service_context.key_pair().cloned();
         let timeout = self.config.timeout;
