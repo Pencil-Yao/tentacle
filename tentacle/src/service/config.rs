@@ -5,6 +5,8 @@ use crate::{
     ProtocolId, SessionId,
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+#[cfg(feature = "tls")]
+use tokio_rustls::rustls::{ClientConfig, ServerConfig};
 
 /// Default max buffer size
 const MAX_BUF_SIZE: usize = 24 * 1024 * 1024;
@@ -68,6 +70,34 @@ impl Default for SessionConfig {
             recv_buffer_size: MAX_BUF_SIZE,
             send_buffer_size: MAX_BUF_SIZE,
             yamux_config: YamuxConfig::default(),
+        }
+    }
+}
+
+/// tls config wrap for server setup
+#[derive(Clone, Default)]
+#[cfg(feature = "tls")]
+pub struct TlsConfig {
+    /// tls server end config
+    pub(crate) tls_server_config: Option<ServerConfig>,
+    /// tls client end config
+    pub(crate) tls_client_config: Option<ClientConfig>,
+    /// tls bind socket address
+    pub(crate) tls_bind: Option<SocketAddr>,
+}
+
+#[cfg(feature = "tls")]
+impl TlsConfig {
+    /// new TlsConfig
+    pub fn new(
+        tls_server_config: Option<ServerConfig>,
+        tls_client_config: Option<ClientConfig>,
+        tls_bind: Option<SocketAddr>,
+    ) -> Self {
+        TlsConfig {
+            tls_server_config,
+            tls_client_config,
+            tls_bind,
         }
     }
 }
