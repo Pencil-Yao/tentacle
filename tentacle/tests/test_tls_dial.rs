@@ -1,17 +1,15 @@
 #![cfg(feature = "tls")]
 use futures::{channel, StreamExt};
-use std::borrow::Cow;
 use std::io::BufReader;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::{fs, thread, time::Duration};
 use tentacle::service::TlsConfig;
-use tentacle::utils::multiaddr_to_socketaddr;
 use tentacle::{
     builder::{MetaBuilder, ServiceBuilder},
     context::{ProtocolContext, ProtocolContextMutRef, ServiceContext},
     error::{DialerErrorKind, ListenErrorKind},
-    multiaddr::{Multiaddr, Protocol},
+    multiaddr::Multiaddr,
     service::{
         ProtocolHandle, ProtocolMeta, Service, ServiceError, ServiceEvent, SessionType,
         TargetProtocol,
@@ -25,7 +23,7 @@ use tokio_rustls::rustls::{
     ProtocolVersion, RootCertStore, ServerConfig, SupportedCipherSuite, ALL_CIPHERSUITES,
 };
 
-pub fn create<F>(meta: ProtocolMeta, shandle: F, cert_path: String, addr: Multiaddr) -> Service<F>
+pub fn create<F>(meta: ProtocolMeta, shandle: F, cert_path: String) -> Service<F>
 where
     F: ServiceHandle + Unpin,
 {
@@ -36,7 +34,7 @@ where
     let tls_config = TlsConfig::new(
         Some(make_server_config(&NetConfig::example(cert_path.clone()))),
         Some(make_client_config(&NetConfig::example(cert_path))),
-        multiaddr_to_socketaddr(&addr),
+        None,
     );
     builder = builder.tls_config(tls_config);
 
@@ -419,10 +417,10 @@ fn test_tls_dial() {
             meta_1,
             shandle,
             "tests/certificates/node0/".to_string(),
-            multi_addr_1.clone(),
         );
         rt.block_on(async move {
             let listen_addr = service.listen(multi_addr_1).await.unwrap();
+
             let _res = addr_sender.send(listen_addr);
             loop {
                 if service.next().await.is_none() {
@@ -435,27 +433,20 @@ fn test_tls_dial() {
     let (shandle, _error_receiver_2) = create_shandle(true);
 
     thread::spawn(move || {
-        let multi_addr_2 = Multiaddr::from_str(
-            "/ip4/127.0.0.1/tcp/0/tls/0x388f042dd011824b91ecda56c85eeec993894f88",
-        )
-        .unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut service = create(
             meta_2,
             shandle,
             "tests/certificates/node1/".to_string(),
-            multi_addr_2,
         );
         rt.block_on(async move {
-            let mut listen_addr = addr_receiver.await.unwrap();
-            listen_addr.push(Protocol::Tls(Cow::Borrowed(
-                "0x09cbaa785348dabd54c61f5f9964474f7bfad7df",
-            )));
+            let listen_addr = addr_receiver.await.unwrap();
             service
                 .dial(listen_addr, TargetProtocol::All)
                 .await
                 .unwrap();
             loop {
+                // sleep(Duration::from_secs(1));
                 if service.next().await.is_none() {
                     break;
                 }

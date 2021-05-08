@@ -11,10 +11,10 @@ use std::{
 
 use crate::runtime::TcpListener;
 use crate::service::TlsConfig;
-use crate::transports::TransportFuture;
+use crate::transports::{TransportFuture, find_type, TransportType};
 use crate::{
     error::TransportErrorKind,
-    multiaddr::Multiaddr,
+    multiaddr::{Multiaddr, Protocol},
     session::AsyncRw,
     transports::{tcp_dial, tcp_listen, Transport},
     utils::{dns::DnsResolver, multiaddr_to_socketaddr, socketaddr_to_multiaddr},
@@ -25,6 +25,7 @@ use tokio::io;
 use tokio_rustls::rustls::{ClientConfig, ServerConfig};
 use tokio_rustls::webpki::DNSNameRef;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
+use std::borrow::Cow;
 
 pub type TlsStream = Box<dyn AsyncRw + Send + Unpin + 'static>;
 
@@ -40,7 +41,11 @@ async fn bind(
         Some(socket_address) => {
             let (local_addr, tcp) = tcp_listen(socket_address, reuse).await?;
 
-            let listen_addr = socketaddr_to_multiaddr(local_addr);
+            let mut listen_addr = socketaddr_to_multiaddr(local_addr);
+
+            if let TransportType::Tls(s) = find_type(&addr) {
+                listen_addr.push(Protocol::Tls(Cow::Borrowed(s.as_str())));
+            }
 
             Ok((listen_addr, TlsListener::new(timeout, tcp, tls_config)))
         }
