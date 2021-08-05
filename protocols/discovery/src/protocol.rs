@@ -40,6 +40,7 @@ pub enum DiscoveryMessage {
         version: u32,
         count: u32,
         listen_port: Option<u16>,
+        peer_key: Option<String>,
     },
     Nodes(Nodes),
 }
@@ -51,6 +52,7 @@ impl DiscoveryMessage {
                 version,
                 count,
                 listen_port,
+                peer_key,
             } => {
                 let version_le = version.to_le_bytes();
                 let count_le = count.to_le_bytes();
@@ -75,10 +77,27 @@ impl DiscoveryMessage {
                             .build()
                     }))
                     .build();
+                let mut peer_key_builder = protocol_mol::AddressOpt::new_builder();
+                if let Some(key) = peer_key {
+                    peer_key_builder = peer_key_builder.set(Some(
+                        protocol_mol::Bytes::new_builder()
+                            .set(
+                                key.as_bytes()
+                                    .to_vec()
+                                    .into_iter()
+                                    .map(Into::into)
+                                    .collect(),
+                            )
+                            .build(),
+                    ));
+                } else {
+                    peer_key_builder = peer_key_builder.set(None);
+                }
                 let get_node = protocol_mol::GetNodes::new_builder()
                     .listen_port(listen_port)
                     .count(count)
                     .version(version)
+                    .peer_key(peer_key_builder.build())
                     .build();
                 protocol_mol::DiscoveryPayload::new_builder()
                     .set(get_node)
@@ -135,10 +154,14 @@ impl DiscoveryMessage {
                     let le = port_reader.raw_data().as_ptr() as *const u16;
                     u16::from_le(unsafe { *le })
                 });
+                let peer_key = reader.peer_key().to_opt().map(|key_reader| {
+                    String::from_utf8(key_reader.raw_data().to_vec()).unwrap_or("".to_string())
+                });
                 Some(DiscoveryMessage::GetNodes {
                     version,
                     count,
                     listen_port,
+                    peer_key,
                 })
             }
             protocol_mol::DiscoveryPayloadUnionReader::Nodes(reader) => {

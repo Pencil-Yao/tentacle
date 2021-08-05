@@ -1,10 +1,13 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     time::{Duration, Instant},
 };
 
 use log::{debug, trace, warn};
 use p2p::{
+    async_trait,
+    multiaddr::Protocol,
     bytes::BytesMut,
     context::{ProtocolContext, ProtocolContextMutRef},
     traits::ServiceProtocol,
@@ -40,27 +43,31 @@ pub struct DiscoveryProtocol<M> {
     addr_mgr: M,
 
     check_interval: Option<Duration>,
+    peer_key: Option<String>,
 }
 
-impl<M: AddressManager> DiscoveryProtocol<M> {
+impl<M: AddressManager + Send + Sync> DiscoveryProtocol<M> {
     // query_cycle: Information broadcast interval per connection, default 24 hours
     // check_interval: Global timing check status interval, default 3s
     pub fn new(
         addr_mgr: M,
         query_cycle: Option<Duration>,
         check_interval: Option<Duration>,
+        peer_key: Option<String>,
     ) -> DiscoveryProtocol<M> {
         DiscoveryProtocol {
             sessions: HashMap::default(),
             dynamic_query_cycle: query_cycle,
             check_interval,
             addr_mgr,
+            peer_key
         }
     }
 }
 
-impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
-    fn init(&mut self, context: &mut ProtocolContext) {
+#[async_trait]
+impl<M: AddressManager + Send + Sync> ServiceProtocol for DiscoveryProtocol<M> {
+    async fn init(&mut self, context: &mut ProtocolContext) {
         debug!("protocol [discovery({})]: init", context.proto_id);
         context
             .set_service_notify(
@@ -68,49 +75,42 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
                 self.check_interval.unwrap_or(CHECK_INTERVAL),
                 0,
             )
+            .await
             .expect("set discovery notify fail")
     }
 
-    fn connected(&mut self, context: ProtocolContextMutRef, _version: &str) {
+    async fn connected(&mut self, context: ProtocolContextMutRef<'_>, _version: &str) {
         let session = context.session;
         debug!(
             "protocol [discovery] open on session [{}], address: [{}], type: [{:?}]",
             session.id, session.address, session.ty
         );
 
-        self.sessions.insert(session.id, SessionState::new(context));
+        self.sessions
+            .insert(session.id, SessionState::new(context, self.peer_key.clone()).await);
     }
 
-    fn disconnected(&mut self, context: ProtocolContextMutRef) {
+    async fn disconnected(&mut self, context: ProtocolContextMutRef<'_>) {
         let session = context.session;
         self.sessions.remove(&session.id);
         debug!("protocol [discovery] close on session [{}]", session.id);
     }
 
-    fn received(&mut self, context: ProtocolContextMutRef, data: bytes::Bytes) {
+    async fn received(&mut self, context: ProtocolContextMutRef<'_>, data: bytes::Bytes) {
         let session = context.session;
         trace!("[received message]: length={}", data.len());
 
         let mgr = &mut self.addr_mgr;
-        let mut check = |behavior| -> bool {
-            if mgr.misbehave(session.id, behavior).is_disconnect() {
-                if context.disconnect(session.id).is_err() {
-                    debug!("disconnect {:?} send fail", session.id)
-                }
-                true
-            } else {
-                false
-            }
-        };
-
         match decode(&mut BytesMut::from(data.as_ref())) {
             Some(item) => {
                 match item {
                     DiscoveryMessage::GetNodes {
-                        listen_port, count, ..
+                        listen_port, count, peer_key, ..
                     } => {
                         if let Some(state) = self.sessions.get_mut(&session.id) {
-                            if state.received_get_nodes && check(Misbehavior::DuplicateGetNodes) {
+                            if state.received_get_nodes
+                                && check(mgr, &context, Misbehavior::DuplicateGetNodes).await
+                            {
                                 return;
                             }
 
@@ -125,7 +125,11 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
                                 state.remote_addr.update_port(port);
                                 state.addr_known.insert(state.remote_addr.to_inner());
                                 // add client listen address to manager
-                                if let RemoteAddress::Listen(ref addr) = state.remote_addr {
+                                if let RemoteAddress::Listen(ref mut addr) = state.remote_addr {
+
+                                    if let Some(pks) = peer_key {
+                                        addr.push(Protocol::Tls(Cow::Owned(pks)));
+                                    }
                                     self.addr_mgr.add_new_addr(session.id, addr.clone());
                                 }
                             }
@@ -153,14 +157,14 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
                             };
 
                             let msg = encode(DiscoveryMessage::Nodes(nodes));
-                            if context.send_message(msg).is_err() {
+                            if context.send_message(msg).await.is_err() {
                                 debug!("{:?} send discovery msg Nodes fail", session.id)
                             }
                         }
                     }
                     DiscoveryMessage::Nodes(nodes) => {
                         if let Some(misbehavior) = verify_nodes_message(&nodes) {
-                            if check(misbehavior) {
+                            if check(mgr, &context, misbehavior).await {
                                 return;
                             }
                         }
@@ -168,7 +172,7 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
                         if let Some(state) = self.sessions.get_mut(&session.id) {
                             if !nodes.announce && state.received_nodes {
                                 warn!("Nodes items more than {}", ANNOUNCE_THRESHOLD);
-                                if check(Misbehavior::DuplicateFirstNodes) {
+                                if check(mgr, &context, Misbehavior::DuplicateFirstNodes).await {
                                     return;
                                 }
                             } else {
@@ -197,7 +201,7 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
                     .addr_mgr
                     .misbehave(session.id, Misbehavior::InvalidData)
                     .is_disconnect()
-                    && context.disconnect(session.id).is_err()
+                    && context.disconnect(session.id).await.is_err()
                 {
                     debug!("disconnect {:?} send fail", session.id)
                 }
@@ -205,26 +209,24 @@ impl<M: AddressManager> ServiceProtocol for DiscoveryProtocol<M> {
         }
     }
 
-    fn notify(&mut self, context: &mut ProtocolContext, _token: u64) {
+    async fn notify(&mut self, context: &mut ProtocolContext, _token: u64) {
         let now = Instant::now();
 
         let dynamic_query_cycle = self.dynamic_query_cycle.unwrap_or(ANNOUNCE_INTERVAL);
         let addr_mgr = &self.addr_mgr;
 
         // get announce list
-        let announce_list: Vec<_> = self
-            .sessions
-            .iter_mut()
-            .filter_map(|(id, state)| {
-                // send all announce addr to remote
-                state.send_messages(context, *id);
-                // check timer
-                state
-                    .check_timer(now, dynamic_query_cycle)
-                    .filter(|addr| addr_mgr.is_valid_addr(addr))
-                    .cloned()
-            })
-            .collect();
+        let mut announce_list = Vec::new();
+        for (id, state) in self.sessions.iter_mut() {
+            // send all announce addr to remote
+            state.send_messages(context, *id).await;
+            // check timer
+            if let Some(multi_addr) = state.check_timer(now, dynamic_query_cycle) {
+                if addr_mgr.is_valid_addr(multi_addr) {
+                    announce_list.push(multi_addr.clone())
+                }
+            }
+        }
 
         if !announce_list.is_empty() {
             let mut rng = rand::thread_rng();
@@ -283,4 +285,22 @@ fn verify_nodes_message(nodes: &Nodes) -> Option<Misbehavior> {
     }
 
     misbehavior
+}
+
+async fn check(
+    addr_mgr: &mut (dyn AddressManager + Send + Sync),
+    context: &ProtocolContextMutRef<'_>,
+    behavior: Misbehavior,
+) -> bool {
+    if addr_mgr
+        .misbehave(context.session.id, behavior)
+        .is_disconnect()
+    {
+        if context.disconnect(context.session.id).await.is_err() {
+            debug!("disconnect {:?} send fail", context.session.id)
+        }
+        true
+    } else {
+        false
+    }
 }
