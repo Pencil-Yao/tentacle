@@ -30,7 +30,10 @@ pub struct SessionState {
 }
 
 impl SessionState {
-    pub(crate) async fn new(context: ProtocolContextMutRef<'_>, peer_key: Option<String>) -> SessionState {
+    pub(crate) async fn new(
+        context: ProtocolContextMutRef<'_>,
+        peer_key: Option<String>,
+    ) -> SessionState {
         let mut addr_known = AddrKnown::default();
         let remote_addr = if context.session.ty.is_outbound() {
             let port = context

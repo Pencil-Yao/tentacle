@@ -155,7 +155,8 @@ impl DiscoveryMessage {
                     u16::from_le(unsafe { *le })
                 });
                 let peer_key = reader.peer_key().to_opt().map(|key_reader| {
-                    String::from_utf8(key_reader.raw_data().to_vec()).unwrap_or("".to_string())
+                    String::from_utf8(key_reader.raw_data().to_vec())
+                        .unwrap_or_else(|_| "".to_string())
                 });
                 Some(DiscoveryMessage::GetNodes {
                     version,

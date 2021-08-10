@@ -79,7 +79,7 @@ fn create_meta(id: ProtocolId, start: u16) -> ProtocolMeta {
                 addr_mgr,
                 Some(Duration::from_secs(7)),
                 None,
-                None
+                None,
             )))
         })
         .build()

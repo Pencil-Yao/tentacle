@@ -7,9 +7,9 @@ use std::{
 use log::{debug, trace, warn};
 use p2p::{
     async_trait,
-    multiaddr::Protocol,
     bytes::BytesMut,
     context::{ProtocolContext, ProtocolContextMutRef},
+    multiaddr::Protocol,
     traits::ServiceProtocol,
     SessionId,
 };
@@ -60,7 +60,7 @@ impl<M: AddressManager + Send + Sync> DiscoveryProtocol<M> {
             dynamic_query_cycle: query_cycle,
             check_interval,
             addr_mgr,
-            peer_key
+            peer_key,
         }
     }
 }
@@ -86,8 +86,10 @@ impl<M: AddressManager + Send + Sync> ServiceProtocol for DiscoveryProtocol<M> {
             session.id, session.address, session.ty
         );
 
-        self.sessions
-            .insert(session.id, SessionState::new(context, self.peer_key.clone()).await);
+        self.sessions.insert(
+            session.id,
+            SessionState::new(context, self.peer_key.clone()).await,
+        );
     }
 
     async fn disconnected(&mut self, context: ProtocolContextMutRef<'_>) {
@@ -105,7 +107,10 @@ impl<M: AddressManager + Send + Sync> ServiceProtocol for DiscoveryProtocol<M> {
             Some(item) => {
                 match item {
                     DiscoveryMessage::GetNodes {
-                        listen_port, count, peer_key, ..
+                        listen_port,
+                        count,
+                        peer_key,
+                        ..
                     } => {
                         if let Some(state) = self.sessions.get_mut(&session.id) {
                             if state.received_get_nodes
@@ -126,7 +131,6 @@ impl<M: AddressManager + Send + Sync> ServiceProtocol for DiscoveryProtocol<M> {
                                 state.addr_known.insert(state.remote_addr.to_inner());
                                 // add client listen address to manager
                                 if let RemoteAddress::Listen(ref mut addr) = state.remote_addr {
-
                                     if let Some(pks) = peer_key {
                                         addr.push(Protocol::Tls(Cow::Owned(pks)));
                                     }
