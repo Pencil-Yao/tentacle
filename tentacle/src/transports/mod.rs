@@ -102,7 +102,7 @@ mod os {
     };
 
     use futures::{prelude::Stream, FutureExt, StreamExt};
-    use log::debug;
+    use log::warn;
     use std::{
         fmt,
         future::Future,
@@ -421,7 +421,7 @@ mod os {
                                     ))))
                                 }
                                 Err(err) => {
-                                    debug!("stream get peer address error: {:?}", err);
+                                    warn!("stream get peer address error: {:?}", err);
                                 }
                             },
                             Poll::Pending => break Poll::Pending,
