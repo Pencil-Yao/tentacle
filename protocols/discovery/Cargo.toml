@@ -17,13 +17,13 @@ no-default-features = true
 [dependencies]
 p2p = { path = "../../tentacle", version = "0.4.2", package = "tentacle" }
 bytes = "1.0"
-futures = { version = "0.3.0" }
+futures = "0.3.0"
 tokio = { version = "1.0.0", features = ["time", "io-util", "net"] }
 tokio-util = { version = "0.7.0", features = ["codec"] }
 log = "0.4"
 rand = "0.8"
 bloom-filters = "0.1"
-molecule = { version = "0.7.0" }
+molecule = "0.7.0"
 
 [dev-dependencies]
 env_logger = "0.6"
