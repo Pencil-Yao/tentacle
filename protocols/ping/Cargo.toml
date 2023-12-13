@@ -15,7 +15,7 @@ all-features = false
 no-default-features = true
 
 [dependencies]
-p2p = { path = "../../tentacle", version = "0.3.0", package = "tentacle" }
+p2p = { path = "../../tentacle", package = "tentacle" }
 log = "0.4"
 futures = { version = "0.3.0" }
 bytes = "1.0.0"

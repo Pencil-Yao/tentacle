@@ -34,7 +34,7 @@ openssl-sys = "0.9"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rand = "0.8"
-ring = "0.16.5"
+ring = { git = "https://github.com/Pencil-Yao/ring", branch = "231205-smx" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # wait x25519-dalek upgrade rand core
