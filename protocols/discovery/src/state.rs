@@ -2,16 +2,16 @@ use std::time::{Duration, Instant};
 
 use log::debug;
 use p2p::{
+    SessionId,
     context::{ProtocolContext, ProtocolContextMutRef},
     multiaddr::{Multiaddr, Protocol},
     utils::multiaddr_to_socketaddr,
-    SessionId,
 };
 
 use super::{
-    addr::AddrKnown,
-    protocol::{encode, DiscoveryMessage, Node, Nodes},
     MAX_ADDR_TO_SEND,
+    addr::AddrKnown,
+    protocol::{DiscoveryMessage, Node, Nodes, encode},
 };
 
 // FIXME: should be a more high level version number
@@ -30,7 +30,10 @@ pub struct SessionState {
 }
 
 impl SessionState {
-    pub(crate) fn new(context: ProtocolContextMutRef) -> SessionState {
+    pub(crate) async fn new(
+        context: ProtocolContextMutRef<'_>,
+        peer_key: Option<String>,
+    ) -> SessionState {
         let mut addr_known = AddrKnown::default();
         let remote_addr = if context.session.ty.is_outbound() {
             let port = context
@@ -44,9 +47,10 @@ impl SessionState {
                 version: VERSION,
                 count: MAX_ADDR_TO_SEND as u32,
                 listen_port: port,
+                peer_key,
             });
 
-            if context.send_message(msg).is_err() {
+            if context.send_message(msg).await.is_err() {
                 debug!("{:?} send discovery msg GetNode fail", context.session.id)
             }
 
@@ -84,7 +88,7 @@ impl SessionState {
         }
     }
 
-    pub(crate) fn send_messages(&mut self, cx: &mut ProtocolContext, id: SessionId) {
+    pub(crate) async fn send_messages(&mut self, cx: &mut ProtocolContext, id: SessionId) {
         if !self.announce_multiaddrs.is_empty() {
             let items = self
                 .announce_multiaddrs
@@ -98,7 +102,7 @@ impl SessionState {
                 items,
             };
             let msg = encode(DiscoveryMessage::Nodes(nodes));
-            if cx.send_message_to(id, cx.proto_id, msg).is_err() {
+            if cx.send_message_to(id, cx.proto_id, msg).await.is_err() {
                 debug!("{:?} send discovery msg Nodes fail", id)
             }
         }
@@ -116,12 +120,12 @@ pub(crate) enum RemoteAddress {
 impl RemoteAddress {
     pub(crate) fn to_inner(&self) -> &Multiaddr {
         match self {
-            RemoteAddress::Init(ref addr) | RemoteAddress::Listen(ref addr) => addr,
+            RemoteAddress::Init(addr) | RemoteAddress::Listen(addr) => addr,
         }
     }
 
     pub(crate) fn update_port(&mut self, port: u16) {
-        if let RemoteAddress::Init(ref addr) = self {
+        if let RemoteAddress::Init(addr) = self {
             let addr = addr
                 .into_iter()
                 .map(|proto| {

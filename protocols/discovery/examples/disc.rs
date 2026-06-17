@@ -1,22 +1,18 @@
 use env_logger;
 use log::debug;
-
+use p2p::{
+    ProtocolId, SessionId, async_trait,
+    builder::{MetaBuilder, ServiceBuilder},
+    context::ServiceContext,
+    multiaddr::Multiaddr,
+    secio::SecioKeyPair,
+    service::{ProtocolHandle, ProtocolMeta, ServiceError, ServiceEvent, TargetProtocol},
+    traits::ServiceHandle,
+};
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
 };
-
-use futures::StreamExt;
-
-use p2p::{
-    builder::{MetaBuilder, ServiceBuilder},
-    context::ServiceContext,
-    multiaddr::Multiaddr,
-    service::{ProtocolHandle, ProtocolMeta, ServiceError, ServiceEvent, TargetProtocol},
-    traits::ServiceHandle,
-    ProtocolId, SessionId,
-};
-
 use tentacle_discovery::{AddressManager, DiscoveryProtocol, MisbehaveResult, Misbehavior};
 
 fn main() {
@@ -25,9 +21,10 @@ fn main() {
     let mut service = ServiceBuilder::default()
         .insert_protocol(meta)
         .forever(true)
+        .handshake_type(SecioKeyPair::secp256k1_generated().into())
         .build(SHandle {});
 
-    let mut rt = tokio::runtime::Runtime::new().unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let first_arg = std::env::args().nth(1).unwrap();
     if first_arg == "server" {
         debug!("Starting server ......");
@@ -36,11 +33,7 @@ fn main() {
                 .listen("/ip4/127.0.0.1/tcp/1337".parse().unwrap())
                 .await
                 .unwrap();
-            loop {
-                if service.next().await.is_none() {
-                    break;
-                }
-            }
+            service.run().await
         });
     } else {
         debug!("Starting client ......");
@@ -56,11 +49,7 @@ fn main() {
                 .listen(format!("/ip4/127.0.0.1/tcp/{}", first_arg).parse().unwrap())
                 .await
                 .unwrap();
-            loop {
-                if service.next().await.is_none() {
-                    break;
-                }
-            }
+            service.run().await
         });
     }
 }
@@ -79,6 +68,7 @@ fn create_meta(id: ProtocolId, start: u16) -> ProtocolMeta {
                 addr_mgr,
                 Some(Duration::from_secs(7)),
                 None,
+                None,
             )))
         })
         .build()
@@ -86,12 +76,13 @@ fn create_meta(id: ProtocolId, start: u16) -> ProtocolMeta {
 
 struct SHandle {}
 
+#[async_trait]
 impl ServiceHandle for SHandle {
-    fn handle_error(&mut self, _env: &mut ServiceContext, error: ServiceError) {
+    async fn handle_error(&mut self, _env: &mut ServiceContext, error: ServiceError) {
         debug!("service error: {:?}", error);
     }
 
-    fn handle_event(&mut self, _env: &mut ServiceContext, event: ServiceEvent) {
+    async fn handle_event(&mut self, _env: &mut ServiceContext, event: ServiceEvent) {
         debug!("service event: {:?}", event);
     }
 }

@@ -36,7 +36,7 @@ openssl = "0.10.25"
 openssl-sys = "0.9"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-ring = "0.17"
+ring = { git = "https://github.com/Pencil-Yao/ring", branch = "260610-smx" }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 rand_core = { version = "0.6" }

@@ -6,10 +6,6 @@ members = [
   "multiaddr",
   "tentacle",
   "bench",
-]
-exclude = [
   "protocols/discovery",
-  "protocols/identify",
-  "protocols/ping",
-  "simple_wasm"
 ]
+exclude = ["protocols/identify", "protocols/ping", "simple_wasm"]

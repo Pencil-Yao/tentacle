@@ -40,6 +40,7 @@ pub enum DiscoveryMessage {
         version: u32,
         count: u32,
         listen_port: Option<u16>,
+        peer_key: Option<String>,
     },
     Nodes(Nodes),
 }
@@ -51,34 +52,52 @@ impl DiscoveryMessage {
                 version,
                 count,
                 listen_port,
+                peer_key,
             } => {
                 let version_le = version.to_le_bytes();
                 let count_le = count.to_le_bytes();
                 let version = protocol_mol::Uint32::new_builder()
-                    .nth0(version_le[0].into())
-                    .nth1(version_le[1].into())
-                    .nth2(version_le[2].into())
-                    .nth3(version_le[3].into())
+                    .nth0(version_le[0])
+                    .nth1(version_le[1])
+                    .nth2(version_le[2])
+                    .nth3(version_le[3])
                     .build();
                 let count = protocol_mol::Uint32::new_builder()
-                    .nth0(count_le[0].into())
-                    .nth1(count_le[1].into())
-                    .nth2(count_le[2].into())
-                    .nth3(count_le[3].into())
+                    .nth0(count_le[0])
+                    .nth1(count_le[1])
+                    .nth2(count_le[2])
+                    .nth3(count_le[3])
                     .build();
                 let listen_port = protocol_mol::PortOpt::new_builder()
                     .set(listen_port.map(|port| {
                         let port_le = port.to_le_bytes();
                         protocol_mol::Uint16::new_builder()
-                            .nth0(port_le[0].into())
-                            .nth1(port_le[1].into())
+                            .nth0(port_le[0])
+                            .nth1(port_le[1])
                             .build()
                     }))
                     .build();
+                let mut peer_key_builder = protocol_mol::AddressOpt::new_builder();
+                if let Some(key) = peer_key {
+                    peer_key_builder = peer_key_builder.set(Some(
+                        protocol_mol::Bytes::new_builder()
+                            .set(
+                                key.as_bytes()
+                                    .to_vec()
+                                    .into_iter()
+                                    .map(Into::into)
+                                    .collect(),
+                            )
+                            .build(),
+                    ));
+                } else {
+                    peer_key_builder = peer_key_builder.set(None);
+                }
                 let get_node = protocol_mol::GetNodes::new_builder()
                     .listen_port(listen_port)
                     .count(count)
                     .version(version)
+                    .peer_key(peer_key_builder.build())
                     .build();
                 protocol_mol::DiscoveryPayload::new_builder()
                     .set(get_node)
@@ -135,10 +154,14 @@ impl DiscoveryMessage {
                     let le = port_reader.raw_data().as_ptr() as *const u16;
                     u16::from_le(unsafe { *le })
                 });
+                let peer_key = reader.peer_key().to_opt().map(|key_reader| {
+                    String::from_utf8(key_reader.raw_data().to_vec()).unwrap_or("".to_string())
+                });
                 Some(DiscoveryMessage::GetNodes {
                     version,
                     count,
                     listen_port,
+                    peer_key,
                 })
             }
             protocol_mol::DiscoveryPayloadUnionReader::Nodes(reader) => {
