@@ -6,8 +6,8 @@ use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::rustls::version::{TLS12, TLS13};
 use tokio_rustls::rustls::{
     ClientConfig, RootCertStore, ServerConfig, SupportedCipherSuite, SupportedProtocolVersion,
-    crypto::aws_lc_rs::ALL_CIPHER_SUITES,
-    crypto::aws_lc_rs::default_provider,
+    crypto::ring::ALL_CIPHER_SUITES,
+    crypto::ring::default_provider,
     pki_types::{
         CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, pem::PemObject,
     },

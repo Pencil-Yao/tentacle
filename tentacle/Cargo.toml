@@ -43,7 +43,11 @@ molecule = "0.9.0"
 igd = { version = "0.16", optional = true, package = "igd-next" }
 
 #tls
-tokio-rustls = { git = "https://github.com/Pencil-Yao/tokio-rustls", branch = "260610-smx", optional = true }
+tokio-rustls = { git = "https://github.com/Pencil-Yao/tokio-rustls", branch = "260610-smx", optional = true, default-features = false, features = [
+    "logging",
+    "tls12",
+    "ring",
+] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 # rand 0.8 not support wasm32
